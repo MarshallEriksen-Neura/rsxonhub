@@ -8,8 +8,15 @@ import { persist } from "zustand/middleware";
  */
 export type Theme = "light" | "dark" | "system";
 
+const THEME_SWITCH_DELAY_MS = 2000;
+const THEME_SWITCH_SETTLE_MS = 700;
+let themeSwitchTimer: number | undefined;
+let themeSettleTimer: number | undefined;
+
 interface ThemeState {
   theme: Theme;
+  isThemeTransitioning: boolean;
+  pendingTheme: "light" | "dark" | null;
   setTheme: (theme: Theme) => void;
   toggle: () => void;
 }
@@ -18,10 +25,26 @@ export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
       theme: "system",
+      isThemeTransitioning: false,
+      pendingTheme: null,
       setTheme: (theme) => set({ theme }),
       toggle: () => {
+        if (get().isThemeTransitioning) return;
+
         const resolved = resolveTheme(get().theme);
-        set({ theme: resolved === "dark" ? "light" : "dark" });
+        const pendingTheme = resolved === "dark" ? "light" : "dark";
+
+        window.clearTimeout(themeSwitchTimer);
+        window.clearTimeout(themeSettleTimer);
+        set({ isThemeTransitioning: true, pendingTheme });
+
+        themeSwitchTimer = window.setTimeout(() => {
+          set({ theme: pendingTheme });
+
+          themeSettleTimer = window.setTimeout(() => {
+            set({ isThemeTransitioning: false, pendingTheme: null });
+          }, THEME_SWITCH_SETTLE_MS);
+        }, THEME_SWITCH_DELAY_MS);
       },
     }),
     {

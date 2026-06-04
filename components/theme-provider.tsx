@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Loader } from "@/components/retroui/Loader";
 import { resolveTheme, useThemeStore } from "@/lib/stores/theme";
 
 /**
@@ -10,6 +11,8 @@ import { resolveTheme, useThemeStore } from "@/lib/stores/theme";
  */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = useThemeStore((s) => s.theme);
+  const isThemeTransitioning = useThemeStore((s) => s.isThemeTransitioning);
+  const pendingTheme = useThemeStore((s) => s.pendingTheme);
 
   useEffect(() => {
     const apply = () => {
@@ -24,7 +27,40 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <ThemeTransitionOverlay
+        isVisible={isThemeTransitioning}
+        pendingTheme={pendingTheme}
+      />
+    </>
+  );
+}
+
+function ThemeTransitionOverlay({
+  isVisible,
+  pendingTheme,
+}: {
+  isVisible: boolean;
+  pendingTheme: "light" | "dark" | null;
+}) {
+  if (!isVisible) return null;
+
+  return (
+    <div
+      className="theme-transition-overlay"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="theme-transition-card">
+        <Loader size="lg" count={5} duration={0.7} delayStep={85} />
+        <span className="theme-transition-label">
+          {pendingTheme === "dark" ? "切换到暗色模式" : "切换到亮色模式"}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 /**
