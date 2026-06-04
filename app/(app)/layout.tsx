@@ -1,6 +1,7 @@
 import { AppSidebar } from "@/components/app-shell/app-sidebar";
 import { AppTopbar } from "@/components/app-shell/app-topbar";
 import { PageBreadcrumb } from "@/components/app-shell/page-breadcrumb";
+import { SidebarCollapseProvider } from "@/components/app-shell/sidebar-collapse-context";
 
 /**
  * (app) 路由组共享布局 = AppShell。登录后所有页共享:
@@ -13,13 +14,15 @@ export default function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="flex h-dvh overflow-hidden">
-      <AppSidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <AppTopbar />
-        <PageBreadcrumb />
-        {children}
+    <SidebarCollapseProvider>
+      <div className="flex h-dvh overflow-hidden">
+        <AppSidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <AppTopbar />
+          <PageBreadcrumb />
+          {children}
+        </div>
       </div>
-    </div>
+    </SidebarCollapseProvider>
   );
 }

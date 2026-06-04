@@ -22,6 +22,7 @@ const schema = z.object({
   // 登录(Auth.js Credentials)
   AUTH_SECRET: optionalString(),
   AUTH_USERNAME: optionalString(),
+  AUTH_PASSWORD: optionalString(),
   AUTH_PASSWORD_HASH: optionalString(),
 
   // Chat / 摘要 / Digest(OpenAI 兼容)

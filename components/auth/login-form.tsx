@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { LogIn } from "lucide-react";
 import { Button } from "@/components/retroui/Button";
+import { Input } from "@/components/retroui/Input";
 import { login, type LoginState } from "@/app/login/actions";
 
 const initialState: LoginState = {};
@@ -16,22 +17,24 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
 
       <label className="flex flex-col gap-2 text-body-sm-medium">
         用户名
-        <input
+        <Input
           name="username"
           autoComplete="username"
+          placeholder=""
           required
-          className="min-h-11 border bg-background px-3 text-body-md"
+          className="min-h-11 bg-background text-body-md"
         />
       </label>
 
       <label className="flex flex-col gap-2 text-body-sm-medium">
         密码
-        <input
+        <Input
           name="password"
           type="password"
           autoComplete="current-password"
+          placeholder=""
           required
-          className="min-h-11 border bg-background px-3 text-body-md"
+          className="min-h-11 bg-background text-body-md"
         />
       </label>
 

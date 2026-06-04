@@ -1,8 +1,11 @@
 import { compare } from "bcryptjs";
 import { eq } from "drizzle-orm";
+import {
+  ensureDatabaseBootstrapped,
+  isMissingRelationError,
+} from "@/lib/db/bootstrap";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
-import { env } from "@/lib/env";
 
 type CredentialsInput = {
   username: string;
@@ -14,43 +17,40 @@ type AuthUser = {
   name: string;
 };
 
-async function verifyEnvUser({
-  username,
-  password,
-}: CredentialsInput): Promise<AuthUser | null> {
-  if (!env.AUTH_USERNAME || !env.AUTH_PASSWORD_HASH) {
-    return null;
-  }
-
-  if (username !== env.AUTH_USERNAME) {
-    return null;
-  }
-
-  const isValid = await compare(password, env.AUTH_PASSWORD_HASH);
-
-  if (!isValid) {
-    return null;
-  }
-
-  return {
-    id: "env-single-user",
-    name: username,
-  };
-}
-
 async function verifyDatabaseUser({
   username,
   password,
 }: CredentialsInput): Promise<AuthUser | null> {
-  const [user] = await db
-    .select({
-      id: users.id,
-      username: users.username,
-      passwordHash: users.passwordHash,
-    })
-    .from(users)
-    .where(eq(users.username, username))
-    .limit(1);
+  await ensureDatabaseBootstrapped();
+
+  let user:
+    | {
+        id: number;
+        username: string;
+        passwordHash: string;
+      }
+    | undefined;
+
+  try {
+    [user] = await db
+      .select({
+        id: users.id,
+        username: users.username,
+        passwordHash: users.passwordHash,
+      })
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      console.warn(
+        'Cannot verify credentials because table "users" does not exist. Run `bun run db:push` or `bun run db:migrate` first.',
+      );
+      return null;
+    }
+
+    throw error;
+  }
 
   if (!user) {
     return null;
@@ -71,7 +71,5 @@ async function verifyDatabaseUser({
 export async function verifyCredentials(
   credentials: CredentialsInput,
 ): Promise<AuthUser | null> {
-  return (
-    (await verifyEnvUser(credentials)) ?? (await verifyDatabaseUser(credentials))
-  );
+  return verifyDatabaseUser(credentials);
 }
