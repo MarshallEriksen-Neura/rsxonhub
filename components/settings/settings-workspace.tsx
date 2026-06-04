@@ -1,14 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Rss, FolderTree, Sparkles, UserCircle } from "lucide-react";
+import { Rss, FolderTree, Sparkles, UserCircle, Target } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { FeedsSection } from "./feeds-section";
 import { CategoriesSection } from "./categories-section";
 import { AISection } from "./ai-section";
 import { AccountSection } from "./account-section";
+import { InterestSection } from "./interest-section";
 import type { PublicAIConfigSnapshot } from "@/lib/ai/config";
+import type { ActiveInterestProfile } from "@/lib/interests/profile";
 
 /**
  * /settings 工作区。左侧分区导航 + 右侧配置面板(双栏,asymmetric)。
@@ -18,7 +20,7 @@ import type { PublicAIConfigSnapshot } from "@/lib/ai/config";
  * 面板切换走 fade/slide,无外发光、无紫色光晕 —— 保持项目 Notion 调性。
  * 移动端导航塌成顶部横向 chips。
  */
-type SectionId = "feeds" | "categories" | "ai" | "account";
+type SectionId = "feeds" | "categories" | "interest" | "ai" | "account";
 
 const SECTIONS: {
   id: SectionId;
@@ -28,14 +30,17 @@ const SECTIONS: {
 }[] = [
   { id: "feeds", label: "订阅源管理", desc: "增删订阅、改名归类", icon: Rss },
   { id: "categories", label: "分类管理", desc: "重命名 / 合并 / 删除", icon: FolderTree },
+  { id: "interest", label: "兴趣画像", desc: "日报与摘要候选", icon: Target },
   { id: "ai", label: "AI 配置", desc: "对话与向量模型", icon: Sparkles },
   { id: "account", label: "账号", desc: "登录与退出", icon: UserCircle },
 ];
 
 export function SettingsWorkspace({
   aiConfig,
+  interestProfile,
 }: {
   aiConfig: PublicAIConfigSnapshot;
+  interestProfile: ActiveInterestProfile | null;
 }) {
   const [active, setActive] = useState<SectionId>("feeds");
 
@@ -99,6 +104,7 @@ export function SettingsWorkspace({
         >
           {active === "feeds" && <FeedsSection />}
           {active === "categories" && <CategoriesSection />}
+          {active === "interest" && <InterestSection initialProfile={interestProfile} />}
           {active === "ai" && <AISection initialConfig={aiConfig} />}
           {active === "account" && <AccountSection />}
         </motion.div>

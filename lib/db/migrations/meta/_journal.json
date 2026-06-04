@@ -8,6 +8,13 @@
       "when": 1780561893632,
       "tag": "0000_mighty_black_panther",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780566917684,
+      "tag": "0001_youthful_pyro",
+      "breakpoints": true
     }
   ]
 }

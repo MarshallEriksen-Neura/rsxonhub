@@ -19,9 +19,11 @@ import { useFeedStore } from "@/lib/stores/feed";
 export function AddFeedDialog({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: () => void;
 }) {
   const feeds = useFeedStore((s) => s.feeds);
   const addFeed = useFeedStore((s) => s.addFeed);
@@ -39,9 +41,11 @@ export function AddFeedDialog({
   const [newFolder, setNewFolder] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [touched, setTouched] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const resolvedFolder = creatingFolder ? newFolder.trim() : folder;
-  const urlValid = isLikelyUrl(url);
+  const urlValid = isSupportedSourceUri(url);
   const urlError = touched && !urlValid;
   const folderError = touched && resolvedFolder.length === 0;
   const canSubmit = urlValid && resolvedFolder.length > 0;
@@ -53,6 +57,8 @@ export function AddFeedDialog({
     setNewFolder("");
     setCreatingFolder(false);
     setTouched(false);
+    setSubmitting(false);
+    setSubmitError(null);
   }
 
   function handleOpenChange(next: boolean) {
@@ -60,12 +66,44 @@ export function AddFeedDialog({
     onOpenChange(next);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     setTouched(true);
     if (!canSubmit) return;
-    const feed = addFeed({ url: url.trim(), title, folder: resolvedFolder });
-    selectFeed(feed.id);
-    handleOpenChange(false);
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const response = await fetch("/api/feeds", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sourceUri: url.trim(),
+          title,
+          folder: resolvedFolder,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.message ?? "添加订阅源失败");
+      }
+
+      const feed = addFeed({
+        id: payload.feed.id,
+        url: payload.feed.url,
+        title: payload.feed.title ?? title,
+        folder: payload.feed.folder,
+      });
+      selectFeed(feed.id);
+      onCreated?.();
+      handleOpenChange(false);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -83,16 +121,24 @@ export function AddFeedDialog({
           }}
         >
           {/* RSS 链接 */}
-          <Field label="RSS 链接" required error={urlError ? "请输入有效的 http(s) 链接" : undefined}>
+          <Field
+            label="RSS 链接"
+            required
+            error={urlError ? "请输入有效的 http(s) 或 rsshub:// 链接" : undefined}
+          >
             <Input
-              type="url"
+              type="text"
               autoFocus
-              placeholder="https://example.com/feed.xml"
+              placeholder="rsshub://anthropic/research"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               aria-invalid={urlError || undefined}
             />
           </Field>
+
+          {submitError ? (
+            <p className="text-body-sm text-destructive">{submitError}</p>
+          ) : null}
 
           {/* 名称(可选) */}
           <Field label="名称" hint="留空则用站点域名">
@@ -163,8 +209,8 @@ export function AddFeedDialog({
           <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)}>
             取消
           </Button>
-          <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-            添加
+          <Button size="sm" disabled={!canSubmit || submitting} onClick={handleSubmit}>
+            {submitting ? "添加中" : "添加"}
           </Button>
         </Dialog.Footer>
       </Dialog.Content>
@@ -198,9 +244,13 @@ function Field({
   );
 }
 
-function isLikelyUrl(value: string): boolean {
+function isSupportedSourceUri(value: string): boolean {
   const v = value.trim();
   if (!v) return false;
+  if (v.startsWith("rsshub://")) {
+    return v.length > "rsshub://".length;
+  }
+
   try {
     const u = new URL(v);
     return u.protocol === "http:" || u.protocol === "https:";

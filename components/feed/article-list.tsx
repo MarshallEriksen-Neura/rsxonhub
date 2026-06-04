@@ -2,13 +2,13 @@
 
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { articlesForView, type MockArticle, type Importance } from "@/lib/mock/feed";
+import { type Importance } from "@/lib/mock/feed";
 import { useFeedStore } from "@/lib/stores/feed";
 import { Badge } from "@/components/retroui/Badge";
 import { Input } from "@/components/retroui/Input";
 import { Button } from "@/components/retroui/Button";
 import { VirtualScroll, useVirtualScroll } from "./virtual-scroll";
-import { useState, useMemo, useEffect } from "react";
+import { useEffect } from "react";
 
 // 重要性徽章变体配置
 const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
@@ -38,42 +38,41 @@ export function ArticleList() {
   const view = useFeedStore((s) => s.view);
   const search = useFeedStore((s) => s.search);
   const setSearch = useFeedStore((s) => s.setSearch);
+  const selectedFeedId = useFeedStore((s) => s.selectedFeedId);
   const selectedArticleId = useFeedStore((s) => s.selectedArticleId);
   const selectArticle = useFeedStore((s) => s.selectArticle);
 
   // 使用虚拟滚动 Hook
-  const virtualScroll = useVirtualScroll<MockArticle>();
+  const virtualScroll = useVirtualScroll<ArticleView>();
   
-  // 获取所有文章数据
-  const allArticles = useMemo(() => articlesForView(view), [view]);
-  
-  // 模拟分页加载数据
   const fetchArticles = async (page: number, size: number) => {
-    // 模拟网络延迟
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    
-    // 过滤搜索
-    const filtered = allArticles.filter((a) =>
-      search.trim()
-        ? `${a.title} ${a.summary}`.toLowerCase().includes(search.toLowerCase())
-        : true,
-    );
-    
-    // 分页
+    const params = new URLSearchParams({
+      view,
+      limit: String(page * size),
+    });
+    if (selectedFeedId) params.set("feedId", String(selectedFeedId));
+    if (search.trim()) params.set("search", search.trim());
+
+    const response = await fetch(`/api/articles?${params}`, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message ?? "文章加载失败");
+    }
+
+    const allArticles = payload.articles as ArticleView[];
     const start = (page - 1) * size;
-    const end = start + size;
-    const pageArticles = filtered.slice(start, end);
+    const pageArticles = allArticles.slice(start, page * size);
     
     return {
       data: pageArticles,
-      hasMore: end < filtered.length,
+      hasMore: allArticles.length >= page * size,
     };
   };
   
   // 当 view 或 search 变化时重新加载
   useEffect(() => {
     virtualScroll.loadInitial(fetchArticles);
-  }, [view, search]);
+  }, [view, search, selectedFeedId]);
 
   return (
     <section className="flex h-full w-96 shrink-0 flex-col overflow-hidden border-r border-hairline bg-background">
@@ -101,7 +100,7 @@ export function ArticleList() {
       {/* 虚拟滚动文章列表 */}
       <VirtualScroll
         items={virtualScroll.items}
-        height={window.innerHeight - 200}
+        height={0}
         estimatedItemHeight={180}
         state={virtualScroll.state}
         onLoadMore={() => virtualScroll.loadMore(fetchArticles)}
@@ -132,7 +131,7 @@ function ArticleListItem({
   active,
   onSelect,
 }: {
-  article: MockArticle;
+  article: ArticleView;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -201,6 +200,23 @@ function ArticleListItem({
     </li>
   );
 }
+
+export type ArticleView = {
+  id: number;
+  feedId: number;
+  feedTitle: string;
+  title: string | null;
+  url: string | null;
+  author: string | null;
+  publishedAt: string;
+  imageUrl: string | null;
+  summary: string;
+  bullets: string[];
+  tags: string[];
+  importance: Importance;
+  status: "unread" | "read" | "star" | "later";
+  content: string;
+};
 
 function formatTime(iso: string): string {
   const d = new Date(iso);

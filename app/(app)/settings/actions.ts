@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { hash } from "bcryptjs";
 import {
   getAIConfig,
   saveAIConfigSnapshot,
@@ -9,6 +10,13 @@ import {
   type PublicAIConfigSnapshot,
   type SaveAIConfigInput,
 } from "@/lib/ai/config";
+import { getActiveInterestProfile, saveInterestProfile } from "@/lib/interests/profile";
+import { enqueueAnalysisForCurrentCandidates } from "@/lib/jobs/feed-jobs";
+import { auth } from "@/auth";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { compare } from "bcryptjs";
 
 export type SaveAISettingsState =
   | {
@@ -111,6 +119,140 @@ export async function fetchAIModels(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "获取模型列表失败。",
+    };
+  }
+}
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "当前密码不能为空"),
+  newPassword: z.string().min(8, "新密码至少需要8个字符"),
+  confirmPassword: z.string(),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: "两次输入的新密码不一致",
+  path: ["confirmPassword"],
+});
+
+export type ChangePasswordState =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+      field?: "currentPassword" | "newPassword" | "confirmPassword";
+    };
+
+export async function changePassword(
+  input: z.input<typeof changePasswordSchema>,
+): Promise<ChangePasswordState> {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return {
+        ok: false,
+        message: "未登录",
+      };
+    }
+
+    const parsed = changePasswordSchema.safeParse(input);
+    if (!parsed.success) {
+      const fieldError = parsed.error.issues[0];
+      return {
+        ok: false,
+        message: fieldError.message,
+        field: fieldError.path[0] as "currentPassword" | "newPassword" | "confirmPassword",
+      };
+    }
+
+    const userId = Number(session.user.id);
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      return {
+        ok: false,
+        message: "用户不存在",
+      };
+    }
+
+    // 验证当前密码
+    const isPasswordValid = await compare(parsed.data.currentPassword, user.passwordHash);
+    if (!isPasswordValid) {
+      return {
+        ok: false,
+        message: "当前密码错误",
+        field: "currentPassword",
+      };
+    }
+
+    // 哈希新密码
+    const newPasswordHash = await hash(parsed.data.newPassword, 12);
+
+    // 更新密码
+    await db.update(users)
+      .set({ passwordHash: newPasswordHash })
+      .where(eq(users.id, userId));
+
+    revalidatePath("/settings");
+
+    return {
+      ok: true,
+      message: "密码修改成功",
+    };
+  } catch (error) {
+    console.error("修改密码失败:", error);
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "修改密码失败",
+    };
+  }
+}
+
+const saveInterestProfileSchema = z.object({
+  content: z.string().trim().min(1).max(6000),
+});
+
+export type SaveInterestProfileState =
+  | {
+      ok: true;
+      content: string;
+      version: number;
+      enqueued: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function getInterestProfileSnapshot() {
+  return getActiveInterestProfile();
+}
+
+export async function saveInterestProfileSettings(
+  input: z.input<typeof saveInterestProfileSchema>,
+): Promise<SaveInterestProfileState> {
+  try {
+    const parsed = saveInterestProfileSchema.parse(input);
+    const { profile, changed } = await saveInterestProfile(parsed.content);
+    const enqueued = changed ? await enqueueAnalysisForCurrentCandidates() : 0;
+    revalidatePath("/settings");
+
+    return {
+      ok: true,
+      content: profile.content,
+      version: profile.version,
+      enqueued,
+      message: changed
+        ? `兴趣画像已保存为 v${profile.version},已入队 ${enqueued} 个候选分析任务。`
+        : `兴趣画像未变化,仍为 v${profile.version}。`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "保存兴趣画像失败。",
     };
   }
 }

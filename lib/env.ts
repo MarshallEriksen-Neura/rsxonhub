@@ -12,12 +12,12 @@ const optionalString = () =>
 
 const schema = z.object({
   DATABASE_URL: z.string().url(),
+  RSSHUB_BASE_URL: z.string().url().default("https://rsshub.app"),
 
   // 登录(Auth.js Credentials)
   AUTH_SECRET: optionalString(),
   AUTH_USERNAME: optionalString(),
   AUTH_PASSWORD: optionalString(),
-  AUTH_PASSWORD_HASH: optionalString(),
 });
 
 export const env = schema.parse(process.env);

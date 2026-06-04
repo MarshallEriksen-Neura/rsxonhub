@@ -32,10 +32,6 @@ async function usersTableExists() {
 }
 
 async function getEnvPasswordHash() {
-  if (env.AUTH_PASSWORD_HASH) {
-    return env.AUTH_PASSWORD_HASH;
-  }
-
   if (env.AUTH_PASSWORD) {
     return hash(env.AUTH_PASSWORD, 12);
   }
@@ -52,7 +48,7 @@ async function syncEnvUser() {
 
   if (!passwordHash) {
     console.warn(
-      "AUTH_USERNAME is set, but AUTH_PASSWORD or AUTH_PASSWORD_HASH is missing; skipping user bootstrap.",
+      "AUTH_USERNAME is set, but AUTH_PASSWORD is missing; skipping user bootstrap.",
     );
     return;
   }

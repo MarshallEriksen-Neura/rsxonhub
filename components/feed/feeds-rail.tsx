@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Inbox, Circle, Star, Sparkles, Plus, Rss } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type FeedView, type MockFeed } from "@/lib/mock/feed";
@@ -30,10 +30,37 @@ export function FeedsRail() {
   const selectedFeedId = useFeedStore((s) => s.selectedFeedId);
   const selectFeed = useFeedStore((s) => s.selectFeed);
   const feeds = useFeedStore((s) => s.feeds);
+  const setFeeds = useFeedStore((s) => s.setFeeds);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const folders = groupByFolder(feeds);
+
+  async function refreshFeeds() {
+    try {
+      const response = await fetch("/api/feeds", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message ?? "订阅源加载失败");
+      }
+      setLoadError(null);
+      setFeeds(
+        payload.feeds.map((feed: ApiFeed) => ({
+          id: feed.id,
+          title: feed.title ?? feed.url,
+          folder: feed.folder,
+          unread: Number(feed.unread ?? 0),
+        })),
+      );
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  useEffect(() => {
+    void Promise.resolve().then(refreshFeeds);
+  }, []);
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-hairline bg-sidebar">
@@ -78,6 +105,11 @@ export function FeedsRail() {
         </div>
 
         <div className="flex flex-col gap-4 px-2 pb-4">
+          {loadError ? (
+            <div className="px-3 py-2 text-caption text-destructive">
+              {loadError}
+            </div>
+          ) : null}
           {folders.map(({ folder, feeds }) => (
             <div key={folder} className="flex flex-col gap-0.5">
               <div className="flex items-center gap-2 px-3 py-1">
@@ -112,10 +144,22 @@ export function FeedsRail() {
         </div>
       </div>
 
-      <AddFeedDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddFeedDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={() => void refreshFeeds()}
+      />
     </aside>
   );
 }
+
+type ApiFeed = {
+  id: number;
+  title: string | null;
+  url: string;
+  folder: string | null;
+  unread: number | string;
+};
 
 function groupByFolder(feeds: MockFeed[]) {
   const map = new Map<string, MockFeed[]>();

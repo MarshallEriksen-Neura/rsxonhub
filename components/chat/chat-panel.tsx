@@ -14,6 +14,7 @@ import {
   ArrowUp,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { Streamdown } from "streamdown";
 import { cn } from "@/lib/utils";
 import { mockArticles } from "@/lib/mock/feed";
 import { Button } from "@/components/retroui/Button";
@@ -520,7 +521,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <div className="flex flex-col gap-4">
       <div className="flex justify-start">
         <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface px-4 py-3 text-body-md leading-relaxed text-charcoal">
-          {message.content}
+          <Streamdown
+            parseIncompleteMarkdown
+            linkSafety={{ enabled: true }}
+            className="prose prose-sm max-w-none break-words text-charcoal prose-headings:text-ink prose-strong:text-ink prose-a:text-primary prose-code:text-ink"
+          >
+            {message.content}
+          </Streamdown>
         </div>
       </div>
       {cited.length > 0 && <SourceCitations articles={cited} />}

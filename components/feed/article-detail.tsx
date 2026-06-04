@@ -1,11 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, MessagesSquare, FileText, Sparkles } from "lucide-react";
-import { mockArticles, type Importance } from "@/lib/mock/feed";
+import { useEffect, useState } from "react";
+import {
+  ExternalLink,
+  MessagesSquare,
+  FileText,
+  Sparkles,
+  ChevronDown,
+} from "lucide-react";
+import { type Importance } from "@/lib/mock/feed";
+import type { ArticleView } from "@/components/feed/article-list";
 import { useFeedStore } from "@/lib/stores/feed";
+import { useAiSummaryStore } from "@/lib/stores/ai-summary";
 import { Button } from "@/components/retroui/Button";
 import { Badge } from "@/components/retroui/Badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ArticleContent } from "@/components/feed/article-content";
+import { cn } from "@/lib/utils";
 
 // 重要性徽章变体配置
 const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
@@ -30,17 +42,58 @@ const importanceLabelMap: Record<Importance, string> = {
  */
 export function ArticleDetail() {
   const selectedArticleId = useFeedStore((s) => s.selectedArticleId);
-  const article = mockArticles.find((a) => a.id === selectedArticleId);
+  const [article, setArticle] = useState<ArticleView | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!article) {
+  useEffect(() => {
+    if (!selectedArticleId) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadArticle() {
+      try {
+        setError(null);
+        const response = await fetch(`/api/articles?articleId=${selectedArticleId}`, {
+          cache: "no-store",
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.message ?? "文章加载失败");
+        }
+        if (!cancelled) {
+          setArticle(payload.articles[0] ?? null);
+          setError(null);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      }
+    }
+
+    void loadArticle();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedArticleId]);
+
+  const visibleArticle =
+    selectedArticleId && article?.id === selectedArticleId ? article : null;
+
+  if (!visibleArticle) {
     return (
       <section className="hidden flex-1 flex-col items-center justify-center gap-4 p-8 text-center md:flex">
         <div className="grid size-16 place-items-center rounded-full bg-surface text-stone">
           <FileText size={28} aria-hidden />
         </div>
         <div className="flex flex-col gap-1">
-          <p className="text-body-sm font-medium text-charcoal">选择一篇文章查看详情</p>
-          <p className="text-caption text-steel">从中间列表点击任意文章</p>
+          <p className="text-body-sm font-medium text-charcoal">
+            {error ?? "选择一篇文章查看详情"}
+          </p>
+          <p className="text-caption text-steel">
+            {error ? "请稍后重试" : "从中间列表点击任意文章"}
+          </p>
         </div>
       </section>
     );
@@ -54,7 +107,7 @@ export function ArticleDetail() {
           size="sm"
           variant="outline"
           render={
-            <Link href={`/chat?article=${article.id}`}>
+            <Link href={`/chat?article=${visibleArticle.id}`}>
               <MessagesSquare size={15} aria-hidden />
               问 AI
             </Link>
@@ -64,7 +117,7 @@ export function ArticleDetail() {
           size="sm"
           variant="ghost"
           render={
-            <a href={article.url} target="_blank" rel="noopener noreferrer">
+            <a href={visibleArticle.url ?? "#"} target="_blank" rel="noopener noreferrer">
               <ExternalLink size={15} aria-hidden />
               原文
             </a>
@@ -77,28 +130,28 @@ export function ArticleDetail() {
         {/* 文章头部 */}
         <header className="flex flex-col gap-4">
           <div className="flex items-center gap-2 text-xs text-steel">
-            <span className="font-medium text-charcoal">{article.feedTitle}</span>
-            {article.author ? (
+            <span className="font-medium text-charcoal">{visibleArticle.feedTitle}</span>
+            {visibleArticle.author ? (
               <>
                 <span aria-hidden className="text-stone">·</span>
-                <span>{article.author}</span>
+                <span>{visibleArticle.author}</span>
               </>
             ) : null}
             <span aria-hidden className="text-stone">·</span>
-            <time dateTime={article.publishedAt} className="text-stone">
-              {new Date(article.publishedAt).toLocaleString("zh-CN")}
+            <time dateTime={visibleArticle.publishedAt} className="text-stone">
+              {new Date(visibleArticle.publishedAt).toLocaleString("zh-CN")}
             </time>
           </div>
 
           <h1 className="font-head text-heading-3 font-semibold tracking-tight text-ink-deep leading-tight">
-            {article.title}
+            {visibleArticle.title}
           </h1>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={importanceVariantMap[article.importance]} size="sm">
-              {importanceLabelMap[article.importance]}
+            <Badge variant={importanceVariantMap[visibleArticle.importance]} size="sm">
+              {importanceLabelMap[visibleArticle.importance]}
             </Badge>
-            {article.tags.map((tag) => (
+            {visibleArticle.tags.map((tag) => (
               <Badge key={tag} variant="default" size="sm">
                 {tag}
               </Badge>
@@ -106,41 +159,102 @@ export function ArticleDetail() {
           </div>
         </header>
 
-        {/* AI 摘要 */}
-        <section className="flex flex-col gap-4 rounded-lg border-l-4 border-primary bg-primary/5 p-5">
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-primary" aria-hidden />
-            <span className="text-xs font-semibold uppercase tracking-wider text-steel">
-              AI 摘要
-            </span>
-          </div>
-          <p className="text-body-md leading-relaxed text-charcoal">
-            {article.summary}
-          </p>
-          {article.bullets.length > 0 ? (
-            <ul className="flex list-disc flex-col gap-2 pl-5 text-body-sm leading-relaxed text-slate">
-              {article.bullets.map((b, i) => (
-                <li key={i} className="marker:text-primary">{b}</li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
+        {/* AI 摘要(按需加载) */}
+        <AiSummary article={visibleArticle} />
 
-        {/* 文章图片 */}
-        {article.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={article.imageUrl}
-            alt=""
-            className="rounded-lg border border-hairline"
-          />
+        {/* 文章题图(订阅源提供的封面图,仅展示) */}
+        {visibleArticle.imageUrl ? (
+          <figure className="m-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={visibleArticle.imageUrl}
+              alt={visibleArticle.title ?? ""}
+              loading="lazy"
+              className="w-full rounded-lg border border-hairline"
+            />
+          </figure>
         ) : null}
 
-        {/* 文章正文 */}
-        <div className="text-body-md leading-relaxed text-charcoal space-y-4">
-          {article.content}
-        </div>
+        {/* 文章正文(已净化的 RSS HTML:图片/视频/嵌入按 .prose-article 排版) */}
+        <ArticleContent html={visibleArticle.content} />
       </div>
     </article>
+  );
+}
+
+/**
+ * AI 摘要 · 按需加载。
+ * 默认折叠,只显示一个触发按钮;点击后才"请求"后端摘要,
+ * 等待期间用 Skeleton 占位,返回后展示摘要正文与要点。
+ * 加载状态按文章 id 缓存(见 ai-summary store),切回不重复请求。
+ */
+function AiSummary({ article }: { article: ArticleView }) {
+  const status = useAiSummaryStore((s) => s.status[article.id] ?? "idle");
+  const expanded = useAiSummaryStore((s) => s.expanded[article.id] ?? false);
+  const toggle = useAiSummaryStore((s) => s.toggle);
+
+  const isLoading = status === "loading";
+  const isReady = status === "ready";
+
+  return (
+    <section className="flex flex-col rounded-lg border-l-4 border-primary bg-primary/5">
+      {/* 触发头:点击切换显隐 */}
+      <button
+        type="button"
+        onClick={() => toggle(article.id)}
+        aria-expanded={expanded}
+        className="flex items-center gap-2 rounded-r-lg px-5 py-4 text-left transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      >
+        <Sparkles size={16} className="text-primary" aria-hidden />
+        <span className="text-xs font-semibold uppercase tracking-wider text-steel">
+          AI 摘要
+        </span>
+        {!expanded ? (
+          <span className="text-caption text-stone">点击生成</span>
+        ) : null}
+        <ChevronDown
+          size={16}
+          aria-hidden
+          className={cn(
+            "ml-auto text-stone transition-transform",
+            expanded && "rotate-180",
+          )}
+        />
+      </button>
+
+      {/* 展开区:loading 用 Skeleton 占位,ready 显示摘要 */}
+      {expanded ? (
+        <div className="flex flex-col gap-4 px-5 pb-5">
+          {isLoading ? (
+            <div className="flex flex-col gap-3" aria-busy aria-live="polite">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-4 w-4/5" />
+              <div className="mt-1 flex flex-col gap-2">
+                <Skeleton className="h-3 w-3/4" />
+                <Skeleton className="h-3 w-2/3" />
+              </div>
+            </div>
+          ) : null}
+
+          {isReady ? (
+            <>
+              <p className="text-body-md leading-relaxed text-charcoal">
+                {article.summary}
+              </p>
+              {article.bullets.length > 0 ? (
+                <ul className="flex list-disc flex-col gap-2 pl-5 text-body-sm leading-relaxed text-slate">
+                  {article.bullets.map((b, i) => (
+                    <li key={i} className="marker:text-primary">
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }

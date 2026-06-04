@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Next.js 应用
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rsxonhub-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://rsxonhub:${DB_PASSWORD}@db:5432/rsxonhub
+      - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_USERNAME=${AUTH_USERNAME}
+      - AUTH_PASSWORD=${AUTH_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - rsxonhub-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL 数据库
+  db:
+    image: postgres:16-alpine
+    container_name: rsxonhub-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rsxonhub
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: rsxonhub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - rsxonhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rsxonhub -d rsxonhub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis (用于 pg-boss 队列)
+  redis:
+    image: redis:7-alpine
+    container_name: rsxonhub-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - rsxonhub-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Worker 服务 (RSS 抓取和 AI 处理)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: rsxonhub-worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://rsxonhub:${DB_PASSWORD}@db:5432/rsxonhub
+      - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - AUTH_SECRET=${AUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - rsxonhub-network
+    # 可选: 限制资源使用
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  rsxonhub-network:
+    driver: bridge

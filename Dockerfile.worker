@@ -1,0 +1,22 @@
+# Worker 服务专用 Dockerfile
+FROM node:20-alpine AS base
+
+WORKDIR /app
+
+# 安装依赖
+COPY package.json bun.lock* ./
+RUN npm install --frozen-lockfile
+
+# 复制源代码
+COPY . .
+
+# 设置环境变量
+ENV NODE_ENV=production
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+
+# 启动 worker
+CMD ["npm", "run", "worker"]

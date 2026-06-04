@@ -1,0 +1,87 @@
+version: '3.8'
+
+# Dokploy/Coolify 部署配置
+# 使用方式:
+# 1. 在 Dokploy/Coolify 中创建新应用
+# 2. 选择 Docker Compose 部署
+# 3. 上传此文件或连接 Git 仓库
+# 4. 配置环境变量 (见下方注释)
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_USERNAME=${AUTH_USERNAME}
+      - AUTH_PASSWORD=${AUTH_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rsxonhub.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.rsxonhub.entrypoints=websecure"
+      - "traefik.http.routers.rsxonhub.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rsxonhub.loadbalancer.server.port=3000"
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-rsxonhub}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-rsxonhub}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - dokploy-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rsxonhub} -d ${DB_NAME:-rsxonhub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - AUTH_SECRET=${AUTH_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
+volumes:
+  postgres_data:
+
+networks:
+  dokploy-network:
+    external: true
+
+# ============================================
+# 必需的环境变量 (在 Dokploy/Coolify UI 中配置):
+# ============================================
+# DOMAIN=your-domain.com          # 你的域名
+# DATABASE_URL=postgresql://...   # 数据库连接字符串
+# DB_PASSWORD=strong_password     # 数据库密码
+# AUTH_SECRET=random_string       # NextAuth 密钥 (openssl rand -base64 32)
+# AUTH_USERNAME=admin             # 管理员用户名
+# AUTH_PASSWORD=your_password     # 管理员密码(明文,启动时自动哈希)
+# RSSHUB_BASE_URL=https://...     # RSSHub 地址 (可选)
+#
+# 生成 AUTH_SECRET:
+# openssl rand -base64 32

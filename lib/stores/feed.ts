@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { mockFeeds, type FeedView, type MockFeed } from "@/lib/mock/feed";
+import { type FeedView, type MockFeed } from "@/lib/mock/feed";
 
 /**
  * Feed 工作区的客户端状态。
@@ -8,6 +8,7 @@ import { mockFeeds, type FeedView, type MockFeed } from "@/lib/mock/feed";
  *   后端接入后,feeds 改由 RSC/API 提供,addFeed 改为调用写 API(见 DESIGN.md §订阅)。
  */
 export type NewFeedInput = {
+  id?: number;
   title: string;
   folder: string;
   url: string;
@@ -35,6 +36,7 @@ interface FeedState {
   selectFeed: (id: number | null) => void;
   selectArticle: (id: number | null) => void;
   setSearch: (q: string) => void;
+  setFeeds: (feeds: MockFeed[]) => void;
   addFeed: (input: NewFeedInput) => MockFeed;
   /** 编辑订阅源标题 / 所属分类。 */
   updateFeed: (id: number, patch: FeedPatch) => void;
@@ -49,7 +51,7 @@ interface FeedState {
 }
 
 export const useFeedStore = create<FeedState>((set, get) => ({
-  feeds: mockFeeds,
+  feeds: [],
   folders: [],
   view: "all",
   selectedFeedId: null,
@@ -59,9 +61,10 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   selectFeed: (id) => set({ selectedFeedId: id, selectedArticleId: null }),
   selectArticle: (id) => set({ selectedArticleId: id }),
   setSearch: (search) => set({ search }),
+  setFeeds: (feeds) => set({ feeds }),
   addFeed: (input) => {
     const feeds = get().feeds;
-    const nextId = feeds.reduce((max, f) => Math.max(max, f.id), 0) + 1;
+    const nextId = input.id ?? feeds.reduce((max, f) => Math.max(max, f.id), 0) + 1;
     // url 暂不进 MockFeed(侧栏只显示 title/folder/unread);真实抓取接入后由 feeds 表持有。
     const feed: MockFeed = {
       id: nextId,
