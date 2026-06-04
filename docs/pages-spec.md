@@ -73,7 +73,7 @@ Notion 设计系统里的 pricing / enterprise / startups / hero 营销页**一�
 单用户，设置项少，用 `segmented-tab` 分区：
 
 - **订阅管理**：列出所有 feeds，改名 / 删除 / 调抓取频率。
-- **AI 配置**：展示当前 chat model / embedding model（来自 env）。展示「embedding 已锁定 N 维」只读提示。
+- **AI 配置**：展示并保存当前 chat / embedding 的 baseURL、API Key、model（写入 `ai_configs`）。展示「embedding 已锁定 N 维」只读提示。
 - **抓取状态**：上次抓取时间 + `usage_logs` 简要统计。
 - **账号**：改密码、登出。
 
@@ -94,7 +94,7 @@ Notion 设计系统里的 pricing / enterprise / startups / hero 营销页**一�
 2. AI 增强：摘要 + 标签 + 每日 digest
 3. RAG：embedding pipeline + 向量检索 + 问答 + 引用
 
-> `/chat` 放最后：依赖 embedding pipeline，而建 `article_chunks.embedding vector(...)` 列前**必须先做一次真实 embedding 调用测出维度**（写入 `EMBEDDING_DIM`），否则维度错误需重嵌整库。
+> `/chat` 放最后：依赖 embedding pipeline。`article_chunks.embedding vector(...)` 的维度由源码常量和迁移锁定；如果后续更换不同维度的 embedding 模型，需要迁移 + 重嵌整库，而不是只改设置页。
 
 ## 明确不做
 

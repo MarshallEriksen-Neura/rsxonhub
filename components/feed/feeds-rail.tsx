@@ -1,13 +1,20 @@
 "use client";
 
-import { Inbox, Circle, Star, Sparkles, Plus } from "lucide-react";
+import { useState } from "react";
+import { Inbox, Circle, Star, Sparkles, Plus, Rss } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { mockFeeds, type FeedView } from "@/lib/mock/feed";
+import { type FeedView, type MockFeed } from "@/lib/mock/feed";
 import { useFeedStore } from "@/lib/stores/feed";
+import { AddFeedDialog } from "./add-feed-dialog";
+import { Button } from "@/components/retroui/Button";
 
 /**
  * /feed 左栏 · 订阅源侧边栏。
- * 顶部虚拟视图(全部/未读/收藏/精选) + 下方 feeds 列表(按文件夹分组,带未读 badge)。
+ * 改进:
+ * - 更清晰的视觉层次和分组
+ * - 统一的激活状态样式（左边框 + 背景色）
+ * - 更好的间距和过渡动画
+ * - 未读徽章使用主题色
  */
 
 const VIEWS: { key: FeedView; label: string; icon: typeof Inbox }[] = [
@@ -22,80 +29,96 @@ export function FeedsRail() {
   const setView = useFeedStore((s) => s.setView);
   const selectedFeedId = useFeedStore((s) => s.selectedFeedId);
   const selectFeed = useFeedStore((s) => s.selectFeed);
+  const feeds = useFeedStore((s) => s.feeds);
 
-  const folders = groupByFolder(mockFeeds);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const folders = groupByFolder(feeds);
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar">
-      <ul className="flex flex-col gap-0.5 p-2">
+    <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-hairline bg-sidebar">
+      {/* 顶部虚拟视图 */}
+      <div className="flex flex-col gap-0.5 border-b border-hairline p-3">
         {VIEWS.map(({ key, label, icon: Icon }) => (
-          <li key={key}>
-            <button
-              type="button"
-              onClick={() => setView(key)}
-              aria-current={view === key ? "true" : undefined}
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-body-sm transition-colors",
-                view === key
-                  ? "bg-accent text-accent-foreground text-body-sm-medium"
-                  : "hover:bg-secondary-hover",
-              )}
-            >
-              <Icon size={16} aria-hidden className="shrink-0" />
-              {label}
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <div className="flex items-center justify-between px-4 pb-1 pt-3">
-        <span className="text-caption font-semibold uppercase tracking-wide text-muted-foreground">
-          订阅源
-        </span>
-        <button
-          type="button"
-          title="添加订阅源"
-          className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-secondary-hover hover:text-foreground"
-        >
-          <Plus size={15} aria-hidden />
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-3 px-2 pb-4">
-        {folders.map(({ folder, feeds }) => (
-          <div key={folder} className="flex flex-col gap-0.5">
-            <span className="px-3 py-1 text-caption text-muted-foreground">
-              {folder}
-            </span>
-            {feeds.map((feed) => (
-              <button
-                key={feed.id}
-                type="button"
-                onClick={() => selectFeed(feed.id)}
-                className={cn(
-                  "flex w-full items-center justify-between gap-2 rounded-md px-3 py-1.5 text-left text-body-sm transition-colors",
-                  selectedFeedId === feed.id
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-secondary-hover",
-                )}
-              >
-                <span className="truncate">{feed.title}</span>
-                {feed.unread > 0 ? (
-                  <span className="shrink-0 rounded-full bg-secondary px-1.5 text-caption text-muted-foreground">
-                    {feed.unread}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
+          <Button
+            key={key}
+            type="button"
+            variant="ghost"
+            onClick={() => setView(key)}
+            aria-current={view === key ? "true" : undefined}
+            className={cn(
+              "w-full justify-start gap-2.5 px-3 py-2 text-body-sm",
+              view === key
+                ? "border-l-2 border-primary bg-primary/5 text-primary font-medium"
+                : "text-charcoal hover:bg-surface hover:text-ink",
+            )}
+          >
+            <Icon size={16} aria-hidden className="shrink-0 opacity-70" />
+            <span className="truncate">{label}</span>
+          </Button>
         ))}
       </div>
+
+      {/* 订阅源列表 */}
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="flex items-center justify-between px-4 pb-2 pt-4">
+          <span className="text-xs font-semibold uppercase tracking-wider text-steel">
+            订阅源
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            title="添加订阅源"
+            onClick={() => setAddOpen(true)}
+            className="text-steel hover:text-ink"
+          >
+            <Plus size={14} aria-hidden />
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-4 px-2 pb-4">
+          {folders.map(({ folder, feeds }) => (
+            <div key={folder} className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2 px-3 py-1">
+                <Rss size={12} className="text-stone" aria-hidden />
+                <span className="text-xs font-medium text-steel">{folder}</span>
+              </div>
+              <div className="flex flex-col divide-y divide-hairline-soft">
+                {feeds.map((feed) => (
+                  <Button
+                    key={feed.id}
+                    type="button"
+                    variant="ghost"
+                    onClick={() => selectFeed(feed.id)}
+                    className={cn(
+                      "w-full justify-between px-3 py-2 text-body-sm",
+                      selectedFeedId === feed.id
+                        ? "border-l-2 border-primary bg-primary/5 text-primary font-medium"
+                        : "text-charcoal hover:bg-surface hover:text-ink",
+                    )}
+                  >
+                    <span className="truncate">{feed.title}</span>
+                    {feed.unread > 0 ? (
+                      <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-micro font-semibold text-primary-foreground">
+                        {feed.unread}
+                      </span>
+                    ) : null}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <AddFeedDialog open={addOpen} onOpenChange={setAddOpen} />
     </aside>
   );
 }
 
-function groupByFolder(feeds: typeof mockFeeds) {
-  const map = new Map<string, typeof mockFeeds>();
+function groupByFolder(feeds: MockFeed[]) {
+  const map = new Map<string, MockFeed[]>();
   for (const feed of feeds) {
     const key = feed.folder ?? "未分组";
     const list = map.get(key) ?? [];

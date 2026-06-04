@@ -1,5 +1,18 @@
-import { mockArticles } from "@/lib/mock/feed";
-import { ImportanceBadge, TagChip } from "@/components/feed/article-badges";
+import { mockArticles, type Importance } from "@/lib/mock/feed";
+import { Badge } from "@/components/retroui/Badge";
+
+// 重要性徽章变体配置
+const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
+  high: "outline",
+  medium: "surface",
+  low: "default",
+};
+
+const importanceLabelMap: Record<Importance, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
 
 /**
  * /digest — 每日精选。
@@ -28,7 +41,9 @@ export default function DigestPage() {
           </div>
 
           <section className="card-feature-cream flex flex-col gap-3">
-            <span className="badge-tag-orange w-fit">今日简报</span>
+            <Badge variant="outline" size="sm" className="w-fit">
+              今日简报
+            </Badge>
             <h2 className="font-head text-heading-4 font-semibold">
               AI、检索与信息管理:今天值得读的 3 条
             </h2>
@@ -50,12 +65,16 @@ export default function DigestPage() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-body-md-medium text-foreground">{a.title}</span>
-                  <ImportanceBadge value={a.importance} />
+                  <Badge variant={importanceVariantMap[a.importance]} size="sm">
+                    {importanceLabelMap[a.importance]}
+                  </Badge>
                 </div>
                 <p className="text-body-sm text-muted-foreground">{a.summary}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {a.tags.map((t) => (
-                    <TagChip key={t}>{t}</TagChip>
+                    <Badge key={t} variant="default" size="sm">
+                      {t}
+                    </Badge>
                   ))}
                 </div>
               </a>

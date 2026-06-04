@@ -289,6 +289,20 @@
 }
 
 .dark {
+  --notion-color-canvas: var(--notion-color-brand-navy-deep);
+  --notion-color-surface: var(--notion-color-brand-navy);
+  --notion-color-surface-soft: var(--notion-color-brand-navy-mid);
+  --notion-color-hairline: color-mix(in srgb, var(--notion-color-on-dark) 12%, transparent);
+  --notion-color-hairline-soft: color-mix(in srgb, var(--notion-color-on-dark) 8%, transparent);
+  --notion-color-hairline-strong: color-mix(in srgb, var(--notion-color-on-dark) 20%, transparent);
+  --notion-color-ink-deep: var(--notion-color-on-dark);
+  --notion-color-ink: var(--notion-color-on-dark);
+  --notion-color-charcoal: color-mix(in srgb, var(--notion-color-on-dark) 90%, transparent);
+  --notion-color-slate: color-mix(in srgb, var(--notion-color-on-dark) 70%, transparent);
+  --notion-color-steel: color-mix(in srgb, var(--notion-color-on-dark) 55%, transparent);
+  --notion-color-stone: color-mix(in srgb, var(--notion-color-on-dark) 40%, transparent);
+  --notion-color-muted: color-mix(in srgb, var(--notion-color-on-dark) 35%, transparent);
+
   --background: var(--notion-color-brand-navy-deep);
   --foreground: var(--notion-color-on-dark);
   --card: var(--notion-color-brand-navy);
@@ -324,6 +338,43 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+
+  /* iOS-style scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--notion-color-steel) 40%, transparent);
+    border-radius: var(--notion-radius-full);
+    transition: background-color 180ms var(--notion-ease);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--notion-color-steel) 60%, transparent);
+  }
+
+  ::-webkit-scrollbar-thumb:active {
+    background: color-mix(in srgb, var(--notion-color-steel) 80%, transparent);
+  }
+
+  /* Dark mode scrollbar */
+  .dark ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--notion-color-on-dark-muted) 40%, transparent);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--notion-color-on-dark-muted) 60%, transparent);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:active {
+    background: color-mix(in srgb, var(--notion-color-on-dark-muted) 80%, transparent);
   }
 
   html {

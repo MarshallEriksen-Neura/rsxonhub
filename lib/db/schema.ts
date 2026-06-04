@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   vector,
 } from "drizzle-orm/pg-core";
-import { env } from "@/lib/env";
+import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
 
 /**
  * 数据模型,见 docs/product-design.md §5。
@@ -26,6 +26,23 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// AI 运行时配置。单用户:chat 与 embedding 各一行。
+export const aiConfigs = pgTable(
+  "ai_configs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind", { enum: ["chat", "embedding"] }).notNull(),
+    baseUrl: text("base_url").notNull(),
+    apiKey: text("api_key"),
+    model: text("model").notNull(),
+    temperature: real("temperature"),
+    dimension: integer("dimension"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("ai_configs_kind_idx").on(t.kind)],
+);
 
 // RSS 源
 export const feeds = pgTable("feeds", {
@@ -90,7 +107,7 @@ export const articleSummaries = pgTable("article_summaries", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-// 向量。维度由 EMBEDDING_DIM 决定(见 §6 坑 1)
+// 向量。维度由 DEFAULT_EMBEDDING_DIM 决定;运行时模型配置从 ai_configs 读取。
 export const articleChunks = pgTable(
   "article_chunks",
   {
@@ -100,7 +117,7 @@ export const articleChunks = pgTable(
       .references(() => articles.id, { onDelete: "cascade" }),
     chunkIndex: integer("chunk_index").notNull(),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: env.EMBEDDING_DIM }),
+    embedding: vector("embedding", { dimensions: DEFAULT_EMBEDDING_DIM }),
   },
   (t) => [
     uniqueIndex("article_chunks_article_chunk_idx").on(t.articleId, t.chunkIndex),
@@ -151,6 +168,7 @@ export const usageLogs = pgTable("usage_logs", {
 
 export const schema = {
   users,
+  aiConfigs,
   feeds,
   subscriptions,
   articles,

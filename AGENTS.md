@@ -11,6 +11,9 @@ The UI framework is **RetroUI**, installed via the shadcn registry `@retroui` (`
 2. If missing, install it: `bunx shadcn@latest add @retroui/<name>`.
 3. Only hand-write a component when RetroUI does not provide it.
 Currently installed: `Button`. See CLAUDE.md for full conventions.
+
+## State management: Zustand for deep prop drilling
+When data needs to flow across multiple component layers (deep prop drilling), use a Zustand store under `lib/stores/` instead of passing props through many levels. Use `persist` middleware from `zustand/middleware` when state should survive page reloads (theme, user preferences, AI config). See existing examples in `lib/stores/theme.ts`, `lib/stores/feed.ts`, `lib/stores/ai-config.ts`.
 <!-- END PROJECT CONVENTIONS -->
 <!-- omx:generated:agents-md -->
 

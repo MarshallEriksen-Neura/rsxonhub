@@ -5,6 +5,7 @@ import { LogOut } from "lucide-react";
 import { useRef, useState } from "react";
 import { signOutToLogin } from "@/components/app-shell/actions";
 import { Avatar } from "@/components/retroui/Avatar";
+import { Button } from "@/components/retroui/Button";
 import { Menu } from "@/components/retroui/Menu";
 
 interface UserMenuProps {
@@ -67,13 +68,14 @@ export function UserMenu({ displayName, initials }: UserMenuProps) {
               onClick={() => actionsRef.current?.close()}
             >
               <form action={signOutToLogin} className="w-full">
-                <button
+                <Button
                   type="submit"
-                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-body-sm-medium"
+                  variant="ghost"
+                  className="w-full justify-start gap-2 px-2 py-1.5 text-body-sm-medium"
                 >
                   <LogOut aria-hidden="true" size={16} />
                   退出
-                </button>
+                </Button>
               </form>
             </Menu.Item>
           </Menu.Content>

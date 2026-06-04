@@ -1,7 +1,9 @@
 import { cn } from "@/lib/utils";
 import { cva, VariantProps } from "class-variance-authority";
-import React, { ButtonHTMLAttributes } from "react";
+import React from "react";
 import { Button as BaseButton } from "@base-ui/react/button";
+
+type BaseButtonProps = React.ComponentProps<typeof BaseButton>;
 
 export const buttonVariants = cva(
   "font-head transition-all rounded cursor-pointer duration-200 font-medium flex justify-center items-center disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
@@ -32,9 +34,10 @@ export const buttonVariants = cva(
 );
 
 export interface IButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>,
+  extends Omit<BaseButtonProps, "className" | "render">,
     VariantProps<typeof buttonVariants> {
-  render?: React.ReactElement | ((props: Record<string, any>) => React.ReactElement); // eslint-disable-line @typescript-eslint/no-explicit-any
+  className?: string;
+  render?: BaseButtonProps["render"];
 }
 
 export const Button = ({
@@ -43,17 +46,26 @@ export const Button = ({
   className = "",
   variant = "default",
   render,
+  nativeButton,
   ref,
   ...props
-}: IButtonProps & { ref?: React.Ref<HTMLButtonElement> }) => {
+}: IButtonProps & { ref?: React.Ref<HTMLElement> }) => {
+  const resolvedNativeButton =
+    nativeButton ?? (render ? isNativeButtonRender(render) : undefined);
+
   return (
     <BaseButton
       ref={ref}
       className={cn(buttonVariants({ variant, size }), className)}
       render={render}
+      nativeButton={resolvedNativeButton}
       {...props}
     >
       {children}
     </BaseButton>
   );
 };
+
+function isNativeButtonRender(render: BaseButtonProps["render"]) {
+  return React.isValidElement(render) && render.type === "button";
+}

@@ -1,35 +1,51 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { env } from "@/lib/env";
+import { getChatConfig, getEmbeddingConfig } from "@/lib/ai/config";
+import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
+import {
+  type AIRetryOptions,
+  withExponentialBackoff,
+} from "@/lib/ai/retry";
 
 /**
  * AI provider 工厂。业务代码只认这里,不直接 import provider SDK。
- * 见 docs/product-design.md §6。chat 与 embedding 分两套配置。
+ * Chat 与 embedding 分两套 DB 配置,均为 OpenAI 兼容接口。
  */
 
-// Chat / 摘要 / Digest / 问答生成
-const chatProvider = createOpenAI({
-  baseURL: env.OPENAI_BASE_URL,
-  apiKey: env.OPENAI_API_KEY ?? "",
-});
-
-export function chatModel() {
-  if (!env.CHAT_MODEL) {
-    throw new Error("CHAT_MODEL 未配置(见 .env.local)");
+export class AIConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AIConfigurationError";
   }
-  return chatProvider(env.CHAT_MODEL);
 }
 
-// Embedding(NVIDIA,OpenAI 兼容)
-const embeddingProvider = createOpenAI({
-  baseURL: env.EMBEDDING_BASE_URL,
-  apiKey: env.EMBEDDING_API_KEY ?? "",
-});
+export const EMBEDDING_DIM = DEFAULT_EMBEDDING_DIM;
 
-export const embeddingRawModel = embeddingProvider.embedding(
-  env.EMBEDDING_MODEL,
-);
+export async function chatModel() {
+  const config = await getChatConfig();
+  assertConfiguredApiKey("对话模型", config.apiKey);
 
-export const EMBEDDING_DIM = env.EMBEDDING_DIM;
+  return createOpenAI({
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey,
+  })(config.model);
+}
+
+export async function embeddingModel() {
+  const config = await getEmbeddingConfig();
+  assertConfiguredApiKey("向量模型", config.apiKey);
+
+  return createOpenAI({
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey,
+  }).embedding(config.model);
+}
+
+export function withAIRequestRetry<T>(
+  operation: (attempt: number) => Promise<T>,
+  options?: AIRetryOptions,
+) {
+  return withExponentialBackoff(operation, options);
+}
 
 /**
  * NVIDIA embedding 的 input_type 坑(见 §6 坑 2):入库 chunk 用 "passage",
@@ -43,4 +59,10 @@ export function nvidiaEmbedOptions(inputType: "passage" | "query") {
       truncate: "NONE",
     },
   } as const;
+}
+
+function assertConfiguredApiKey(label: string, apiKey: string) {
+  if (!apiKey.trim()) {
+    throw new AIConfigurationError(`${label} API Key 未配置,请先在设置页保存 AI 配置。`);
+  }
 }
