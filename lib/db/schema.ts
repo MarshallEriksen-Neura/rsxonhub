@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigserial,
+  boolean,
   index,
   integer,
   jsonb,
@@ -42,6 +43,29 @@ export const aiConfigs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("ai_configs_kind_idx").on(t.kind)],
+);
+
+// AI 模型候选目录。由设置页成功拉取 /models 后缓存,用于重新打开页面时恢复快捷选择。
+export const aiModelPresets = pgTable(
+  "ai_model_presets",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind", { enum: ["chat", "embedding"] }).notNull(),
+    baseUrl: text("base_url").notNull(),
+    model: text("model").notNull(),
+    supportsChat: boolean("supports_chat").default(false).notNull(),
+    supportsEmbedding: boolean("supports_embedding")
+      .default(false)
+      .notNull(),
+    lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("ai_model_presets_kind_base_model_idx").on(t.kind, t.baseUrl, t.model),
+    index("ai_model_presets_kind_base_idx").on(t.kind, t.baseUrl),
+  ],
 );
 
 // RSS 源
@@ -260,6 +284,21 @@ export const feedFetchRuns = pgTable("feed_fetch_runs", {
   error: text("error"),
 });
 
+export const embeddingRebuildRuns = pgTable("embedding_rebuild_runs", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  status: text("status", { enum: ["pending", "running", "complete", "failed"] })
+    .default("pending")
+    .notNull(),
+  model: text("model").notNull(),
+  baseUrl: text("base_url").notNull(),
+  dimension: integer("dimension").notNull(),
+  articleCount: integer("article_count").default(0).notNull(),
+  chunkCount: integer("chunk_count").default(0).notNull(),
+  error: text("error"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
 export const digests = pgTable(
   "digests",
   {
@@ -296,6 +335,7 @@ export const digestItems = pgTable(
 export const schema = {
   users,
   aiConfigs,
+  aiModelPresets,
   feeds,
   subscriptions,
   articles,
@@ -309,6 +349,7 @@ export const schema = {
   articleRelevanceScores,
   digestCandidates,
   feedFetchRuns,
+  embeddingRebuildRuns,
   digests,
   digestItems,
 };

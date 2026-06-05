@@ -3,7 +3,7 @@
 import "./globals.css";
 import { useEffect } from "react";
 import { FullPageError } from "@/components/error-management/full-page-error";
-import { ThemeProvider, ThemeScript } from "@/components/theme-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 import { TriangleAlert, WifiOff, ServerCrash, FileX } from "lucide-react";
 
 interface GlobalErrorProps {
@@ -70,7 +70,6 @@ export default function GlobalError({
     <html lang="zh-CN" suppressHydrationWarning className="h-full antialiased">
       <head>
         <title>系统异常 | rsxonhub</title>
-        <ThemeScript />
       </head>
       <body className="min-h-full bg-background text-foreground">
         <ThemeProvider>

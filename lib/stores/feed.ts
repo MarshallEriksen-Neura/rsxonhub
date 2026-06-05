@@ -1,12 +1,18 @@
 import { create } from "zustand";
-import { type FeedView, type MockFeed } from "@/lib/mock/feed";
 
 /**
  * Feed 工作区的客户端状态。
- * - UI 选中态(view / selectedFeedId / selectedArticleId / search):纯前端,不缓存业务数据。
- * - feeds:布局阶段用 mockFeeds 持有,以便"添加订阅源"能即时反映到侧栏。
- *   后端接入后,feeds 改由 RSC/API 提供,addFeed 改为调用写 API(见 DESIGN.md §订阅)。
+ * 业务数据来自 /api/feeds 与 /api/articles;这里仅缓存侧栏导航快照和 UI 选中态。
  */
+export type FeedView = "all" | "unread" | "star";
+
+export type FeedNavItem = {
+  id: number;
+  title: string;
+  folder: string | null;
+  unread: number;
+};
+
 export type NewFeedInput = {
   id?: number;
   title: string;
@@ -20,12 +26,11 @@ export type FeedPatch = {
 };
 
 interface FeedState {
-  feeds: MockFeed[];
+  feeds: FeedNavItem[];
   /**
    * 显式创建、暂无订阅源的空分类。
    * 分类本身 = subscriptions.folder(自由文本),有源时从 feeds 聚合得到;
-   * 但用户可以先建一个空分类、之后再往里加源,所以这些"空壳"单独记在这里。
-   * 某分类一旦有源进驻,UI 聚合时会与此列表去重。
+   * 空壳分类只作为本地 UI 辅助,不代表已持久化的业务实体。
    */
   folders: string[];
   view: FeedView;
@@ -36,17 +41,17 @@ interface FeedState {
   selectFeed: (id: number | null) => void;
   selectArticle: (id: number | null) => void;
   setSearch: (q: string) => void;
-  setFeeds: (feeds: MockFeed[]) => void;
-  addFeed: (input: NewFeedInput) => MockFeed;
-  /** 编辑订阅源标题 / 所属分类。 */
+  setFeeds: (feeds: FeedNavItem[]) => void;
+  addFeed: (input: NewFeedInput) => FeedNavItem;
+  /** 更新侧栏快照;持久化修改由 /api/feeds 负责。 */
   updateFeed: (id: number, patch: FeedPatch) => void;
-  /** 退订单个源。选中态若指向它则清空。 */
+  /** 从侧栏快照移除;持久化删除由 /api/feeds 负责。 */
   removeFeed: (id: number) => void;
-  /** 新建一个空分类。已存在(无论有无源)则忽略。返回是否新建成功。 */
+  /** 新建一个本地空分类。已存在(无论有无源)则忽略。返回是否新建成功。 */
   addFolder: (name: string) => boolean;
-  /** 重命名分类:把该 folder 下所有源迁到新名,空壳列表同步。 */
+  /** 重命名本地空分类,并同步已加载的侧栏快照。 */
   renameFolder: (from: string, to: string) => void;
-  /** 删除分类:其下所有源一并退订(危险操作,UI 需二次确认)。 */
+  /** 删除本地空分类,并从已加载的侧栏快照移除该分类下的源。 */
   deleteFolder: (folder: string) => void;
 }
 
@@ -65,8 +70,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   addFeed: (input) => {
     const feeds = get().feeds;
     const nextId = input.id ?? feeds.reduce((max, f) => Math.max(max, f.id), 0) + 1;
-    // url 暂不进 MockFeed(侧栏只显示 title/folder/unread);真实抓取接入后由 feeds 表持有。
-    const feed: MockFeed = {
+    const feed: FeedNavItem = {
       id: nextId,
       title: input.title.trim() || hostFromUrl(input.url),
       folder: input.folder.trim() || null,
@@ -112,7 +116,6 @@ export const useFeedStore = create<FeedState>((set, get) => ({
       feeds: state.feeds.map((f) =>
         f.folder === from ? { ...f, folder: next } : f,
       ),
-      // 同名合并:去重后落地新名
       folders: dedupe(
         state.folders.map((name) => (name === from ? next : name)),
       ),

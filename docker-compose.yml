@@ -20,8 +20,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
     networks:
       - rsxonhub-network
     healthcheck:
@@ -53,24 +51,6 @@ services:
       retries: 5
       start_period: 30s
 
-  # Redis (用于 pg-boss 队列)
-  redis:
-    image: redis:7-alpine
-    container_name: rsxonhub-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    networks:
-      - rsxonhub-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Worker 服务 (RSS 抓取和 AI 处理)
   worker:
     build:
@@ -86,8 +66,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
     networks:
       - rsxonhub-network
     # 可选: 限制资源使用
@@ -99,8 +77,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  redis_data:
     driver: local
 
 networks:

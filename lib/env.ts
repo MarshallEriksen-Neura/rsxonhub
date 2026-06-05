@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeHttpUrl } from "@/lib/url";
 
 /**
  * 集中校验与导出环境变量。见 docs/product-design.md §8。
@@ -10,9 +11,18 @@ const optionalString = () =>
     z.string().min(1).optional(),
   );
 
+const urlString = () =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value;
+      return normalizeHttpUrl(value);
+    },
+    z.string().url(),
+  );
+
 const schema = z.object({
-  DATABASE_URL: z.string().url(),
-  RSSHUB_BASE_URL: z.string().url().default("https://rsshub.app"),
+  DATABASE_URL: urlString(),
+  RSSHUB_BASE_URL: urlString().default("https://rsshub.app"),
 
   // 登录(Auth.js Credentials)
   AUTH_SECRET: optionalString(),

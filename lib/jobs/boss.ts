@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import { env } from "@/lib/env";
+import { JOB_NAMES } from "@/lib/jobs/names";
 
 const globalForBoss = globalThis as unknown as {
   boss?: PgBoss;
@@ -16,7 +17,12 @@ export function getBoss() {
 
 export async function startBoss() {
   const boss = getBoss();
-  globalForBoss.bossStart ??= boss.start().then(() => boss);
+  globalForBoss.bossStart ??= boss.start().then(async () => {
+    await Promise.all(
+      Object.values(JOB_NAMES).map((queueName) => boss.createQueue(queueName)),
+    );
+    return boss;
+  });
   return globalForBoss.bossStart;
 }
 

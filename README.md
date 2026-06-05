@@ -70,7 +70,6 @@ docker-compose exec app npx drizzle-kit push
 **Services:**
 - **App**: Next.js application (port 3000)
 - **Database**: PostgreSQL 16 (port 5432)
-- **Redis**: Queue system (port 6379)
 - **Worker**: Background tasks (RSS fetching, AI processing)
 
 **Management Commands:**

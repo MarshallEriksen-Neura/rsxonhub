@@ -13,3 +13,12 @@ export type FeedFetchOneJob = {
 export type ArticleAnalyzeJob = {
   articleId: number;
 };
+
+export type ArticleEmbedJob = {
+  articleId?: number;
+  rebuildRunId?: number;
+};
+
+export type DigestGenerateDailyJob = {
+  digestDate?: string;
+};

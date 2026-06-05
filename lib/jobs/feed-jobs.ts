@@ -1,16 +1,24 @@
 import { sql } from "drizzle-orm";
 import type { Job } from "pg-boss";
+import { analyzeArticle } from "@/lib/ai/article-analysis";
+import { getEmbeddingConfig } from "@/lib/ai/config";
+import {
+  embedSingleArticle,
+  rebuildArticleEmbeddings,
+} from "@/lib/ai/embedding-rebuild";
 import { db } from "@/lib/db";
 import { articleSummaries, feeds } from "@/lib/db/schema";
+import { generateDailyDigest } from "@/lib/digest/generate-digest";
 import { startBoss } from "@/lib/jobs/boss";
 import {
   JOB_NAMES,
   type ArticleAnalyzeJob,
+  type ArticleEmbedJob,
+  type DigestGenerateDailyJob,
   type FeedFetchOneJob,
 } from "@/lib/jobs/names";
-import { ingestFeed } from "@/lib/rss/ingest";
-import { analyzeArticle } from "@/lib/ai/article-analysis";
 import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
+import { ingestFeed, type IngestFeedResult } from "@/lib/rss/ingest";
 
 export async function enqueueFeedFetch(feedId: number) {
   const boss = await startBoss();
@@ -36,6 +44,70 @@ export async function enqueueArticleAnalysis(articleId: number) {
       retryBackoff: true,
       singletonKey: `article.analyze:${articleId}`,
       singletonSeconds: 60 * 30,
+    },
+  );
+}
+
+export async function enqueueArticleEmbedding(input: ArticleEmbedJob) {
+  const boss = await startBoss();
+  const singletonKey = input.rebuildRunId
+    ? `embedding.rebuild:${input.rebuildRunId}`
+    : `article.embed:${input.articleId}`;
+
+  return boss.send(JOB_NAMES.articleEmbed, input, {
+    retryLimit: 2,
+    retryBackoff: true,
+    singletonKey,
+    singletonSeconds: 60 * 60,
+  });
+}
+
+export type PostIngestEmbeddingResult = {
+  enqueuedCount: number;
+  skipped: boolean;
+  error: string | null;
+};
+
+export async function enqueueChangedArticleEmbeddings(
+  result: Pick<IngestFeedResult, "changedArticleIds">,
+): Promise<PostIngestEmbeddingResult> {
+  const articleIds = Array.from(new Set(result.changedArticleIds));
+  if (articleIds.length === 0) {
+    return { enqueuedCount: 0, skipped: true, error: null };
+  }
+
+  try {
+    const config = await getEmbeddingConfig();
+    if (!config.apiKey.trim()) {
+      return {
+        enqueuedCount: 0,
+        skipped: true,
+        error: "向量模型 API Key 未配置,已跳过后台 RAG 索引。",
+      };
+    }
+
+    await Promise.all(articleIds.map((articleId) => enqueueArticleEmbedding({ articleId })));
+    return { enqueuedCount: articleIds.length, skipped: false, error: null };
+  } catch (error) {
+    return {
+      enqueuedCount: 0,
+      skipped: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function enqueueDailyDigest(input: DigestGenerateDailyJob = {}) {
+  const boss = await startBoss();
+  const digestDate = input.digestDate ?? new Date().toISOString().slice(0, 10);
+  return boss.send(
+    JOB_NAMES.digestGenerateDaily,
+    { digestDate },
+    {
+      retryLimit: 2,
+      retryBackoff: true,
+      singletonKey: `digest:${digestDate}`,
+      singletonSeconds: 60 * 60 * 12,
     },
   );
 }
@@ -71,7 +143,8 @@ export async function registerFeedJobs() {
     async (jobs: Job<FeedFetchOneJob>[]) => {
       await Promise.all(
         jobs.map(async (job) => {
-          await ingestFeed(job.data.feedId);
+          const result = await ingestFeed(job.data.feedId);
+          await enqueueChangedArticleEmbeddings(result);
           await enqueueAnalysisForCurrentCandidates();
         }),
       );
@@ -82,6 +155,30 @@ export async function registerFeedJobs() {
     JOB_NAMES.articleAnalyze,
     async (jobs: Job<ArticleAnalyzeJob>[]) => {
       await Promise.all(jobs.map((job) => analyzeArticle(job.data.articleId)));
+    },
+  );
+
+  await boss.work<ArticleEmbedJob>(
+    JOB_NAMES.articleEmbed,
+    async (jobs: Job<ArticleEmbedJob>[]) => {
+      await Promise.all(
+        jobs.map((job) => {
+          if (job.data.rebuildRunId) {
+            return rebuildArticleEmbeddings(job.data.rebuildRunId);
+          }
+          if (!job.data.articleId) {
+            throw new Error("article.embed requires articleId or rebuildRunId");
+          }
+          return embedSingleArticle(job.data.articleId);
+        }),
+      );
+    },
+  );
+
+  await boss.work<DigestGenerateDailyJob>(
+    JOB_NAMES.digestGenerateDaily,
+    async (jobs: Job<DigestGenerateDailyJob>[]) => {
+      await Promise.all(jobs.map((job) => generateDailyDigest(job.data)));
     },
   );
 }

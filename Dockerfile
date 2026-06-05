@@ -47,6 +47,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # 复制必要的配置文件
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./
+COPY --from=builder --chown=nextjs:nodejs /app/lib/db/migrations ./lib/db/migrations
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 
 USER nextjs
@@ -60,5 +61,6 @@ ENV HOSTNAME="0.0.0.0"
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
 
-# 启动命令
-CMD ["node", "server.js"]
+# 启动命令 - 先执行数据库迁移，再启动应用
+# bootstrapDatabase() 会自动处理迁移历史问题
+CMD ["sh", "-c", "npx drizzle-kit migrate && node server.js"]

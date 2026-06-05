@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Check } from "lucide-react";
+import { Check, Loader2, Plus, Search } from "lucide-react";
 import { Dialog } from "@/components/retroui/Dialog";
 import { Input } from "@/components/retroui/Input";
 import { Button } from "@/components/retroui/Button";
@@ -43,6 +43,9 @@ export function AddFeedDialog({
   const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<FeedPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const resolvedFolder = creatingFolder ? newFolder.trim() : folder;
   const urlValid = isSupportedSourceUri(url);
@@ -59,11 +62,42 @@ export function AddFeedDialog({
     setTouched(false);
     setSubmitting(false);
     setSubmitError(null);
+    setPreviewing(false);
+    setPreview(null);
+    setPreviewError(null);
   }
 
   function handleOpenChange(next: boolean) {
     if (!next) reset();
     onOpenChange(next);
+  }
+
+  async function handlePreview() {
+    setTouched(true);
+    setPreview(null);
+    setPreviewError(null);
+    if (!urlValid) return;
+
+    setPreviewing(true);
+    try {
+      const response = await fetch("/api/feeds/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceUri: url.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message ?? "预览订阅源失败");
+      }
+      setPreview(payload as FeedPreview);
+      if (!title.trim() && payload.feed?.title) {
+        setTitle(payload.feed.title);
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreviewing(false);
+    }
   }
 
   async function handleSubmit() {
@@ -131,13 +165,46 @@ export function AddFeedDialog({
               autoFocus
               placeholder="rsshub://anthropic/research"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                setPreview(null);
+                setPreviewError(null);
+              }}
               aria-invalid={urlError || undefined}
             />
           </Field>
 
-          {submitError ? (
-            <p className="text-body-sm text-destructive">{submitError}</p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handlePreview()}
+              disabled={!urlValid || previewing || submitting}
+              className="gap-1.5"
+            >
+              {previewing ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Search size={14} aria-hidden />}
+              预览
+            </Button>
+            {preview ? (
+              <span className="truncate text-micro text-steel">
+                {preview.feed.title ?? preview.source.canonicalUri} · {preview.feed.itemCount} 条
+              </span>
+            ) : null}
+          </div>
+
+          {preview ? (
+            <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-body-sm text-charcoal">
+              <div className="font-medium text-ink">{preview.feed.title ?? "未命名订阅源"}</div>
+              <div className="mt-1 truncate text-micro text-steel">{preview.source.canonicalUri}</div>
+              {preview.feed.siteUrl ? (
+                <div className="mt-1 truncate text-micro text-steel">{preview.feed.siteUrl}</div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {previewError || submitError ? (
+            <p className="text-body-sm text-destructive">{previewError ?? submitError}</p>
           ) : null}
 
           {/* 名称(可选) */}
@@ -243,6 +310,20 @@ function Field({
     </label>
   );
 }
+
+type FeedPreview = {
+  source: {
+    type: "rsshub" | "http";
+    canonicalUri: string;
+    fetchUrl: string;
+    route?: string;
+  };
+  feed: {
+    title: string | null;
+    siteUrl: string | null;
+    itemCount: number;
+  };
+};
 
 function isSupportedSourceUri(value: string): boolean {
   const v = value.trim();

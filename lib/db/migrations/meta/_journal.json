@@ -15,6 +15,34 @@
       "when": 1780566917684,
       "tag": "0001_youthful_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780571426691,
+      "tag": "0002_lying_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780576504234,
+      "tag": "0003_repair_feed_fetch_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780581923526,
+      "tag": "0004_careful_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780584600000,
+      "tag": "0005_model_preset_capabilities",
+      "breakpoints": true
     }
   ]
 }

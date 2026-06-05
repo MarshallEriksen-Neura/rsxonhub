@@ -19,9 +19,10 @@ interface Article {
 
 export function BasicExample() {
   const virtualScroll = useVirtualScroll<Article>();
+  const { loadInitial } = virtualScroll;
 
   // 模拟数据获取
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = React.useCallback(async (page: number, size: number) => {
     // 模拟网络请求
     await new Promise((resolve) => setTimeout(resolve, 1000));
     
@@ -36,12 +37,12 @@ export function BasicExample() {
       data,
       hasMore: page < 5, // 模拟只有5页数据
     };
-  };
+  }, []);
 
   // 初始加载
   React.useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, []);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
 
   return (
     <div className="h-[600px] w-full">
@@ -67,8 +68,9 @@ export function BasicExample() {
 
 export function CustomStatesExample() {
   const virtualScroll = useVirtualScroll<Article>();
+  const { loadInitial } = virtualScroll;
 
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = React.useCallback(async (page: number, size: number) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     
     // 模拟空数据
@@ -83,11 +85,11 @@ export function CustomStatesExample() {
     }));
 
     return { data, hasMore: page < 3 };
-  };
+  }, []);
 
   React.useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, []);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
 
   return (
     <div className="h-[600px] w-full">
@@ -120,8 +122,9 @@ export function CustomStatesExample() {
 
 export function WithHeaderFooterExample() {
   const virtualScroll = useVirtualScroll<Article>();
+  const { loadInitial } = virtualScroll;
 
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = React.useCallback(async (page: number, size: number) => {
     await new Promise((resolve) => setTimeout(resolve, 800));
     
     const data = Array.from({ length: size }, (_, i) => ({
@@ -131,11 +134,11 @@ export function WithHeaderFooterExample() {
     }));
 
     return { data, hasMore: page < 10 };
-  };
+  }, []);
 
   React.useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, []);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
 
   return (
     <div className="h-[600px] w-full">
@@ -181,8 +184,9 @@ export function WithHeaderFooterExample() {
 
 export function ManualLoadMoreExample() {
   const virtualScroll = useVirtualScroll<Article>();
+  const { loadInitial } = virtualScroll;
 
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = React.useCallback(async (page: number, size: number) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     
     const data = Array.from({ length: size }, (_, i) => ({
@@ -192,11 +196,11 @@ export function ManualLoadMoreExample() {
     }));
 
     return { data, hasMore: page < 5 };
-  };
+  }, []);
 
   React.useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, []);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
 
   return (
     <div className="h-[600px] w-full">
@@ -238,8 +242,9 @@ export function ManualLoadMoreExample() {
 
 export function FeedPageExample() {
   const virtualScroll = useVirtualScroll<Article>();
+  const { loadInitial } = virtualScroll;
 
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = React.useCallback(async (page: number, size: number) => {
     // 这里可以替换为真实的 API 调用
     // const response = await fetch(`/api/articles?page=${page}&size=${size}`);
     // const data = await response.json();
@@ -253,11 +258,11 @@ export function FeedPageExample() {
     }));
 
     return { data, hasMore: page < 8 };
-  };
+  }, []);
 
   React.useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, []);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
 
   return (
     <VirtualScroll

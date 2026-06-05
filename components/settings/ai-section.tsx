@@ -13,17 +13,38 @@ import {
   MessageSquare,
   Search,
 } from "lucide-react";
-import { fetchAIModels, saveAISettings } from "@/app/(app)/settings/actions";
+import {
+  fetchAIModels,
+  saveAISettings,
+} from "@/app/(app)/settings/actions";
 import { Button } from "@/components/retroui/Button";
 import { Input } from "@/components/retroui/Input";
 import { Switch } from "@/components/retroui/Switch";
 import { maskSecret } from "@/lib/ai/mask";
 import type { PublicAIConfigSnapshot } from "@/lib/ai/config";
+import type {
+  AIModelCapability,
+  AIModelPresetSnapshot,
+} from "@/lib/ai/model-presets";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "./section-header";
 
 type AISectionProps = {
   initialConfig: PublicAIConfigSnapshot;
+  initialModelPresets: AIModelPresetSnapshot;
+  latestRebuild: {
+    id: number;
+    status: string;
+    model: string;
+    baseUrl: string;
+    dimension: number;
+    articleCount: number;
+    chunkCount: number;
+    error: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    createdAt: string;
+  } | null;
 };
 
 type ChatDraft = {
@@ -43,22 +64,17 @@ type EmbeddingDraft = {
 type ModelItem = {
   id: string;
   name: string;
-  category: "chat" | "embedding";
-  selected: boolean;
+  supportsChat: boolean;
+  supportsEmbedding: boolean;
+  selectedChat: boolean;
+  selectedEmbedding: boolean;
 };
 
-const CHAT_MODEL_SUGGESTIONS = [
-  "deepseek-ai/deepseek-v3.1",
-  "openai/gpt-oss-120b",
-  "meta/llama-3.3-70b-instruct",
-];
-
-const EMBEDDING_MODEL_SUGGESTIONS = [
-  "nvidia/llama-nemotron-embed-1b-v2",
-  "nvidia/nv-embedqa-e5-v5",
-];
-
-export function AISection({ initialConfig }: AISectionProps) {
+export function AISection({
+  initialConfig,
+  initialModelPresets,
+  latestRebuild,
+}: AISectionProps) {
   const [savedConfig, setSavedConfig] = useState(initialConfig);
   const [chat, setChat] = useState<ChatDraft>(() => ({
     baseUrl: initialConfig.chat.baseUrl,
@@ -72,9 +88,11 @@ export function AISection({ initialConfig }: AISectionProps) {
     model: initialConfig.embedding.model,
     dimension: initialConfig.embedding.dimension,
   }));
-  const [chatModels, setChatModels] = useState<string[]>(CHAT_MODEL_SUGGESTIONS);
-  const [embeddingModels, setEmbeddingModels] = useState<string[]>(
-    EMBEDDING_MODEL_SUGGESTIONS,
+  const [chatModels, setChatModels] = useState<AIModelCapability[]>(
+    initialModelPresets.chat,
+  );
+  const [embeddingModels, setEmbeddingModels] = useState<AIModelCapability[]>(
+    initialModelPresets.embedding,
   );
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -83,29 +101,29 @@ export function AISection({ initialConfig }: AISectionProps) {
   const [modelFetchKind, setModelFetchKind] = useState<"chat" | "embedding" | null>(null);
   const [modelSearch, setModelSearch] = useState("");
   const [modelFilter, setModelFilter] = useState<"all" | "chat" | "embedding">("all");
+  const [pendingRebuild, setPendingRebuild] = useState<{
+    message: string;
+    existingChunkCount: number;
+    probedDimension: number;
+    expectedDimension: number;
+  } | null>(null);
 
   const modelItems = useMemo<ModelItem[]>(() => {
-    const uniqueChatModels = unique([chat.model, savedConfig.chat.model, ...chatModels]);
-    const uniqueEmbeddingModels = unique([
-      embedding.model,
-      savedConfig.embedding.model,
+    return mergeModelCapabilities([
+      capabilityForModel(chat.model, "chat"),
+      capabilityForModel(savedConfig.chat.model, "chat"),
+      capabilityForModel(embedding.model, "embedding"),
+      capabilityForModel(savedConfig.embedding.model, "embedding"),
+      ...chatModels,
       ...embeddingModels,
-    ]);
-
-    return [
-      ...uniqueChatModels.map((name) => ({
-        id: `chat:${name}`,
-        name,
-        category: "chat" as const,
-        selected: name === chat.model,
-      })),
-      ...uniqueEmbeddingModels.map((name) => ({
-        id: `embedding:${name}`,
-        name,
-        category: "embedding" as const,
-        selected: name === embedding.model,
-      })),
-    ];
+    ]).map((model) => ({
+      id: model.model,
+      name: model.model,
+      supportsChat: model.supportsChat,
+      supportsEmbedding: model.supportsEmbedding,
+      selectedChat: model.model === chat.model,
+      selectedEmbedding: model.model === embedding.model,
+    }));
   }, [
     chat.model,
     chatModels,
@@ -117,7 +135,10 @@ export function AISection({ initialConfig }: AISectionProps) {
 
   const filteredModels = modelItems.filter((model) => {
     const matchSearch = model.name.toLowerCase().includes(modelSearch.toLowerCase());
-    const matchFilter = modelFilter === "all" || model.category === modelFilter;
+    const matchFilter =
+      modelFilter === "all" ||
+      (modelFilter === "chat" && model.supportsChat) ||
+      (modelFilter === "embedding" && model.supportsEmbedding);
     return matchSearch && matchFilter;
   });
 
@@ -138,12 +159,27 @@ export function AISection({ initialConfig }: AISectionProps) {
   };
 
   const selectModel = (model: ModelItem) => {
-    if (model.category === "chat") {
+    if (modelFilter === "chat" && model.supportsChat) {
       updateChat({ model: model.name });
       return;
     }
 
-    updateEmbedding({ model: model.name });
+    if (modelFilter === "embedding" && model.supportsEmbedding) {
+      updateEmbedding({ model: model.name });
+      return;
+    }
+
+    if (model.supportsChat && !model.supportsEmbedding) {
+      updateChat({ model: model.name });
+      return;
+    }
+
+    if (model.supportsEmbedding && !model.supportsChat) {
+      updateEmbedding({ model: model.name });
+      return;
+    }
+
+    updateChat({ model: model.name });
   };
 
   const refreshModels = (kind: "chat" | "embedding") => {
@@ -178,14 +214,26 @@ export function AISection({ initialConfig }: AISectionProps) {
     });
   };
 
-  const save = () => {
+  const save = (confirmEmbeddingRebuild = false) => {
     startTransition(async () => {
       const result = await saveAISettings({
         chat,
         embedding,
+        confirmEmbeddingRebuild,
       });
 
       if (!result.ok) {
+        if ("kind" in result && result.kind === "embedding-rebuild-required") {
+          setPendingRebuild({
+            message: result.message,
+            existingChunkCount: result.existingChunkCount,
+            probedDimension: result.probedDimension,
+            expectedDimension: result.expectedDimension,
+          });
+          setError(null);
+          setNotice(null);
+          return;
+        }
         setError(result.message);
         setNotice(null);
         return;
@@ -206,6 +254,18 @@ export function AISection({ initialConfig }: AISectionProps) {
         model: result.config.embedding.model,
         dimension: result.config.embedding.dimension,
       }));
+      setChatModels((current) =>
+        mergeModelCapabilities([
+          capabilityForModel(result.config.chat.model, "chat"),
+          ...current,
+        ]),
+      );
+      setEmbeddingModels((current) =>
+        mergeModelCapabilities([
+          capabilityForModel(result.config.embedding.model, "embedding"),
+          ...current,
+        ]),
+      );
       setDirty(false);
       setError(null);
       setNotice(result.message);
@@ -221,7 +281,7 @@ export function AISection({ initialConfig }: AISectionProps) {
           <Button
             size="sm"
             disabled={!dirty || isPending}
-            onClick={save}
+            onClick={() => save(false)}
             className="gap-1.5"
           >
             {isPending ? (
@@ -247,6 +307,36 @@ export function AISection({ initialConfig }: AISectionProps) {
           <span>{error ?? notice}</span>
         </div>
       )}
+
+      {pendingRebuild ? (
+        <div className="mb-5 flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-body-sm text-charcoal">
+          <div className="font-medium text-destructive">需要重建文章向量</div>
+          <p>{pendingRebuild.message}</p>
+          <div className="text-micro text-steel">
+            现有 {pendingRebuild.existingChunkCount} 个 chunks · probe 维度 {pendingRebuild.probedDimension} · 表维度 {pendingRebuild.expectedDimension}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => save(true)} disabled={isPending}>
+              确认保存并后台重建
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setPendingRebuild(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {latestRebuild ? (
+        <div className="mb-5 rounded-md border border-hairline bg-surface px-4 py-3 text-body-sm text-charcoal">
+          <div className="font-medium text-ink">最近向量重建 #{latestRebuild.id}</div>
+          <div className="mt-1 text-micro text-steel">
+            {latestRebuild.status} · {latestRebuild.model} · {latestRebuild.articleCount} 篇文章 · {latestRebuild.chunkCount} chunks
+          </div>
+          {latestRebuild.error ? (
+            <div className="mt-1 text-micro text-destructive">{latestRebuild.error}</div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="flex flex-col gap-5">
@@ -465,7 +555,9 @@ function ModelRow({
   model: ModelItem;
   onSelect: () => void;
 }) {
-  const Icon = model.category === "chat" ? MessageSquare : Database;
+  const primaryKind = model.supportsEmbedding && !model.supportsChat ? "embedding" : "chat";
+  const Icon = primaryKind === "chat" ? MessageSquare : Database;
+  const selected = model.selectedChat || model.selectedEmbedding;
 
   return (
     <button
@@ -473,7 +565,7 @@ function ModelRow({
       onClick={onSelect}
       className={cn(
         "flex min-w-0 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors",
-        model.selected
+        selected
           ? "border-primary/40 bg-primary/8 text-ink"
           : "border-hairline bg-surface text-charcoal hover:border-primary/30",
       )}
@@ -484,10 +576,14 @@ function ModelRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate font-mono text-body-sm">{model.name}</span>
         <span className="text-micro text-steel">
-          {model.category === "chat" ? "对话模型" : "向量模型"}
+          {model.supportsChat && model.supportsEmbedding
+            ? "对话 / 向量模型"
+            : model.supportsChat
+              ? "对话模型"
+              : "向量模型"}
         </span>
       </span>
-      {model.selected && <Check size={15} aria-hidden className="text-primary" />}
+      {selected && <Check size={15} aria-hidden className="text-primary" />}
     </button>
   );
 }
@@ -566,6 +662,37 @@ function KeyField({
   );
 }
 
-function unique(values: string[]) {
-  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+function capabilityForModel(
+  model: string,
+  kind: "chat" | "embedding",
+): AIModelCapability {
+  return {
+    model,
+    supportsChat: kind === "chat",
+    supportsEmbedding: kind === "embedding",
+  };
+}
+
+function mergeModelCapabilities(models: AIModelCapability[]) {
+  const byModel = new Map<string, AIModelCapability>();
+
+  for (const model of models) {
+    const name = model.model.trim();
+    if (!name) {
+      continue;
+    }
+
+    const existing = byModel.get(name);
+    byModel.set(name, {
+      model: name,
+      supportsChat: Boolean(existing?.supportsChat || model.supportsChat),
+      supportsEmbedding: Boolean(
+        existing?.supportsEmbedding || model.supportsEmbedding,
+      ),
+    });
+  }
+
+  return Array.from(byModel.values()).sort((a, b) =>
+    a.model.localeCompare(b.model),
+  );
 }

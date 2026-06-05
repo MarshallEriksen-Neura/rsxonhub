@@ -1,6 +1,7 @@
 import { desc, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
+  articleChunks,
   articleRelevanceScores,
   articles,
   digestCandidates,
@@ -12,24 +13,13 @@ import {
   tokenizeInterest,
   type ActiveInterestProfile,
 } from "@/lib/interests/profile";
+import { rankArticleCandidates, type ArticleCandidate } from "@/lib/retrieval/rank-candidates";
 
 export type CandidateSelectionOptions = {
   digestDate?: string;
   maxCandidates?: number;
   recencyDays?: number;
   perSourceLimit?: number;
-};
-
-export type ArticleCandidate = {
-  articleId: number;
-  feedId: number;
-  interestProfileVersion: number;
-  rank: number;
-  combinedScore: number;
-  bm25Score: number;
-  recencyScore: number;
-  sourceScore: number;
-  features: Record<string, unknown>;
 };
 
 export async function selectDigestCandidates(options: CandidateSelectionOptions = {}) {
@@ -76,44 +66,18 @@ export async function scoreCandidates(
     .orderBy(desc(sql`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`))
     .limit(500);
 
-  const perSourceCounts = new Map<number, number>();
+  const embeddingScores = profile.embedding
+    ? await loadEmbeddingScores(profile.embedding, since)
+    : new Map<number, number>();
 
-  return rows
-    .map((row) => {
-      const text = `${row.title ?? ""}\n${row.summaryRaw ?? ""}\n${row.content ?? ""}`;
-      const bm25Score = lexicalScore(text, terms);
-      const recencyScore = recencyScoreFor(row.publishedAt ?? row.fetchedAt);
-      const sourceScore = Number(row.weight ?? 1);
-      const routeRankBoost = rankBudgetBoost(row.sourceMeta);
-      const combinedScore =
-        bm25Score * 0.58 + recencyScore * 0.22 + sourceScore * 0.12 + routeRankBoost * 0.08;
-
-      return {
-        articleId: row.articleId,
-        feedId: row.feedId,
-        interestProfileVersion: profile.version,
-        rank: 0,
-        combinedScore,
-        bm25Score,
-        recencyScore,
-        sourceScore,
-        features: {
-          termsMatched: matchedTerms(text, terms),
-          routeRankBoost,
-          sourceMeta: row.sourceMeta ?? {},
-        },
-      };
-    })
-    .filter((candidate) => candidate.bm25Score > 0 || candidate.recencyScore > 0.75)
-    .sort((a, b) => b.combinedScore - a.combinedScore)
-    .filter((candidate) => {
-      const count = perSourceCounts.get(candidate.feedId) ?? 0;
-      if (count >= perSourceLimit) return false;
-      perSourceCounts.set(candidate.feedId, count + 1);
-      return true;
-    })
-    .slice(0, maxCandidates)
-    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  return rankArticleCandidates({
+    rows,
+    terms,
+    profileVersion: profile.version,
+    embeddingScores,
+    maxCandidates,
+    perSourceLimit,
+  });
 }
 
 export async function persistCandidateScores(candidates: ArticleCandidate[]) {
@@ -127,7 +91,7 @@ export async function persistCandidateScores(candidates: ArticleCandidate[]) {
           articleId: candidate.articleId,
           interestProfileVersion: candidate.interestProfileVersion,
           bm25Score: candidate.bm25Score,
-          embeddingScore: null,
+          embeddingScore: candidate.embeddingScore,
           recencyScore: candidate.recencyScore,
           sourceScore: candidate.sourceScore,
           combinedScore: candidate.combinedScore,
@@ -140,6 +104,7 @@ export async function persistCandidateScores(candidates: ArticleCandidate[]) {
           ],
           set: {
             bm25Score: candidate.bm25Score,
+            embeddingScore: candidate.embeddingScore,
             recencyScore: candidate.recencyScore,
             sourceScore: candidate.sourceScore,
             combinedScore: candidate.combinedScore,
@@ -164,13 +129,7 @@ async function persistDigestCandidates(digestDate: string, candidates: ArticleCa
           interestProfileVersion: candidate.interestProfileVersion,
           retrievalRank: candidate.rank,
           selectionStage: "retrieval",
-          scoreSnapshot: {
-            combinedScore: candidate.combinedScore,
-            bm25Score: candidate.bm25Score,
-            recencyScore: candidate.recencyScore,
-            sourceScore: candidate.sourceScore,
-            features: candidate.features,
-          },
+          scoreSnapshot: scoreSnapshot(candidate),
         })
         .onConflictDoUpdate({
           target: [digestCandidates.digestDate, digestCandidates.articleId],
@@ -178,13 +137,7 @@ async function persistDigestCandidates(digestDate: string, candidates: ArticleCa
             interestProfileVersion: candidate.interestProfileVersion,
             retrievalRank: candidate.rank,
             selectionStage: "retrieval",
-            scoreSnapshot: {
-              combinedScore: candidate.combinedScore,
-              bm25Score: candidate.bm25Score,
-              recencyScore: candidate.recencyScore,
-              sourceScore: candidate.sourceScore,
-              features: candidate.features,
-            },
+            scoreSnapshot: scoreSnapshot(candidate),
             createdAt: sql`now()`,
           },
         });
@@ -192,30 +145,42 @@ async function persistDigestCandidates(digestDate: string, candidates: ArticleCa
   });
 }
 
-function lexicalScore(text: string, terms: string[]) {
-  if (terms.length === 0) return 0;
-  const lower = text.toLowerCase();
-  const hits = terms.reduce((count, term) => count + (lower.includes(term) ? 1 : 0), 0);
-  return hits / terms.length;
+async function loadEmbeddingScores(embedding: number[], since: Date) {
+  const vector = JSON.stringify(embedding);
+  const rows = await db
+    .select({
+      articleId: articleChunks.articleId,
+      distance: sql<number>`min(${articleChunks.embedding} <=> ${vector}::vector)`,
+    })
+    .from(articleChunks)
+    .innerJoin(articles, eq(articles.id, articleChunks.articleId))
+    .where(
+      sql`${articleChunks.embedding} is not null
+        and coalesce(${articles.publishedAt}, ${articles.fetchedAt}) >= ${since}`,
+    )
+    .groupBy(articleChunks.articleId)
+    .orderBy(sql`min(${articleChunks.embedding} <=> ${vector}::vector)`)
+    .limit(500);
+
+  return new Map(
+    rows.map((row) => [row.articleId, distanceToEmbeddingScore(Number(row.distance))]),
+  );
 }
 
-function matchedTerms(text: string, terms: string[]) {
-  const lower = text.toLowerCase();
-  return terms.filter((term) => lower.includes(term)).slice(0, 16);
+function scoreSnapshot(candidate: ArticleCandidate) {
+  return {
+    combinedScore: candidate.combinedScore,
+    bm25Score: candidate.bm25Score,
+    embeddingScore: candidate.embeddingScore,
+    recencyScore: candidate.recencyScore,
+    sourceScore: candidate.sourceScore,
+    features: candidate.features,
+  };
 }
 
-function recencyScoreFor(date: Date | null) {
-  if (!date) return 0;
-  const ageHours = Math.max(0, Date.now() - date.getTime()) / 3_600_000;
-  return Math.max(0, 1 - ageHours / (14 * 24));
-}
-
-function rankBudgetBoost(sourceMeta: Record<string, unknown> | null) {
-  const rank = typeof sourceMeta?.rank === "number" ? sourceMeta.rank : null;
-  if (!rank) return 0;
-  if (rank <= 5) return 1;
-  if (rank <= 20) return 0.5;
-  return 0.15;
+function distanceToEmbeddingScore(distance: number) {
+  if (!Number.isFinite(distance)) return 0;
+  return 1 / (1 + Math.max(0, distance));
 }
 
 function todayKey() {

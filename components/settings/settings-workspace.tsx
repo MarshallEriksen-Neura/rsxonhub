@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Rss, FolderTree, Sparkles, UserCircle, Target } from "lucide-react";
+import { Rss, FolderTree, Sparkles, UserCircle, Target, Activity } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { FeedsSection } from "./feeds-section";
@@ -9,8 +9,11 @@ import { CategoriesSection } from "./categories-section";
 import { AISection } from "./ai-section";
 import { AccountSection } from "./account-section";
 import { InterestSection } from "./interest-section";
+import { ObservabilitySection } from "./observability-section";
 import type { PublicAIConfigSnapshot } from "@/lib/ai/config";
+import type { AIModelPresetSnapshot } from "@/lib/ai/model-presets";
 import type { ActiveInterestProfile } from "@/lib/interests/profile";
+import type { getSettingsObservabilitySnapshot } from "@/app/(app)/settings/actions";
 
 /**
  * /settings 工作区。左侧分区导航 + 右侧配置面板(双栏,asymmetric)。
@@ -20,7 +23,7 @@ import type { ActiveInterestProfile } from "@/lib/interests/profile";
  * 面板切换走 fade/slide,无外发光、无紫色光晕 —— 保持项目 Notion 调性。
  * 移动端导航塌成顶部横向 chips。
  */
-type SectionId = "feeds" | "categories" | "interest" | "ai" | "account";
+type SectionId = "feeds" | "categories" | "interest" | "ai" | "observability" | "account";
 
 const SECTIONS: {
   id: SectionId;
@@ -32,15 +35,20 @@ const SECTIONS: {
   { id: "categories", label: "分类管理", desc: "重命名 / 合并 / 删除", icon: FolderTree },
   { id: "interest", label: "兴趣画像", desc: "日报与摘要候选", icon: Target },
   { id: "ai", label: "AI 配置", desc: "对话与向量模型", icon: Sparkles },
+  { id: "observability", label: "运行观测", desc: "抓取与用量", icon: Activity },
   { id: "account", label: "账号", desc: "登录与退出", icon: UserCircle },
 ];
 
 export function SettingsWorkspace({
   aiConfig,
+  aiModelPresets,
   interestProfile,
+  observability,
 }: {
   aiConfig: PublicAIConfigSnapshot;
+  aiModelPresets: AIModelPresetSnapshot;
   interestProfile: ActiveInterestProfile | null;
+  observability: Awaited<ReturnType<typeof getSettingsObservabilitySnapshot>>;
 }) {
   const [active, setActive] = useState<SectionId>("feeds");
 
@@ -105,7 +113,14 @@ export function SettingsWorkspace({
           {active === "feeds" && <FeedsSection />}
           {active === "categories" && <CategoriesSection />}
           {active === "interest" && <InterestSection initialProfile={interestProfile} />}
-          {active === "ai" && <AISection initialConfig={aiConfig} />}
+          {active === "ai" && (
+            <AISection
+              initialConfig={aiConfig}
+              initialModelPresets={aiModelPresets}
+              latestRebuild={observability.latestRebuild}
+            />
+          )}
+          {active === "observability" && <ObservabilitySection snapshot={observability} />}
           {active === "account" && <AccountSection />}
         </motion.div>
       </div>

@@ -11,6 +11,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
 } from "@/lib/ai/defaults";
 import { maskSecret } from "@/lib/ai/mask";
+import { buildNextAIConfigPlan } from "@/lib/ai/config-plan";
 
 export type AIConfigKind = "chat" | "embedding";
 
@@ -63,8 +64,13 @@ const saveAIConfigSchema = z.object({
 });
 
 export type SaveAIConfigInput = z.input<typeof saveAIConfigSchema>;
+export type ParsedAIConfigInput = z.infer<typeof saveAIConfigSchema>;
 
 type AIConfigRow = typeof aiConfigs.$inferSelect;
+
+export function parseAIConfigInput(input: SaveAIConfigInput): ParsedAIConfigInput {
+  return saveAIConfigSchema.parse(input);
+}
 
 export async function getChatConfig(): Promise<ChatRuntimeConfig> {
   return getAIConfig("chat");
@@ -83,7 +89,6 @@ export async function getAIConfig(kind: AIConfigKind): Promise<AIRuntimeConfig> 
     .where(eq(aiConfigs.kind, kind))
     .limit(1);
 
-  // 按 kind 分发到对应重载,使返回类型可被精确收窄(union 无法匹配字面量重载)。
   return kind === "chat"
     ? rowToRuntimeConfig("chat", row)
     : rowToRuntimeConfig("embedding", row);
@@ -104,12 +109,20 @@ export async function getPublicAIConfigSnapshot(): Promise<PublicAIConfigSnapsho
 export async function saveAIConfigSnapshot(
   input: SaveAIConfigInput,
 ): Promise<PublicAIConfigSnapshot> {
-  const parsed = saveAIConfigSchema.parse(input);
+  const parsed = parseAIConfigInput(input);
   const [existingChat, existingEmbedding] = await Promise.all([
     getChatConfig(),
     getEmbeddingConfig(),
   ]);
+  const { chat, embedding } = buildNextAIConfigPlan(parsed, existingChat, existingEmbedding);
+  return upsertAIConfigs(chat, embedding);
+}
 
+export function buildNextAIConfigs(
+  parsed: ParsedAIConfigInput,
+  existingChat: ChatRuntimeConfig,
+  existingEmbedding: EmbeddingRuntimeConfig,
+) {
   const chat: ChatRuntimeConfig = {
     kind: "chat",
     baseUrl: parsed.chat.baseUrl,
@@ -126,6 +139,20 @@ export async function saveAIConfigSnapshot(
     dimension: DEFAULT_EMBEDDING_DIM,
   };
 
+  return { chat, embedding };
+}
+
+export function embeddingConfigChanged(
+  previous: EmbeddingRuntimeConfig,
+  next: EmbeddingRuntimeConfig,
+) {
+  return previous.baseUrl !== next.baseUrl || previous.model !== next.model;
+}
+
+export async function upsertAIConfigs(
+  chat: ChatRuntimeConfig,
+  embedding: EmbeddingRuntimeConfig,
+): Promise<PublicAIConfigSnapshot> {
   await Promise.all([upsertConfig(chat), upsertConfig(embedding)]);
 
   return {

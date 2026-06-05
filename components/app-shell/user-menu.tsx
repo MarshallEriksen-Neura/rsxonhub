@@ -1,86 +1,49 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { LogOut } from "lucide-react";
-import { useRef, useState } from "react";
 import { signOutToLogin } from "@/components/app-shell/actions";
 import { Avatar } from "@/components/retroui/Avatar";
 import { Button } from "@/components/retroui/Button";
-import { Menu } from "@/components/retroui/Menu";
+import { cn } from "@/lib/utils";
 
 interface UserMenuProps {
   displayName: string;
   initials: string;
+  collapsed?: boolean;
 }
 
-type MenuActions = {
-  close: () => void;
-  unmount: () => void;
-};
-
-export function UserMenu({ displayName, initials }: UserMenuProps) {
-  const actionsRef = useRef<MenuActions | null>(null);
-  const [open, setOpen] = useState(false);
-
+export function UserMenu({ displayName, initials, collapsed }: UserMenuProps) {
   return (
-    <Menu
-      actionsRef={actionsRef}
-      open={open}
-      onOpenChange={(nextOpen, eventDetails) => {
-        if (!nextOpen) {
-          eventDetails.preventUnmountOnClose();
-        }
-        setOpen(nextOpen);
-      }}
-    >
-      <Menu.Trigger
-        className="group grid size-9 shrink-0 place-items-center rounded-full outline-none transition-transform focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary data-[popup-open]:translate-y-0.5"
-        aria-label={`${displayName} 菜单`}
-      >
-        <Avatar className="size-9 border-black shadow-subtle transition-transform duration-200 group-hover:-translate-y-0.5">
-          <Avatar.Fallback className="text-caption-bold">
-            {initials}
-          </Avatar.Fallback>
-        </Avatar>
-      </Menu.Trigger>
+    <div className="flex w-full items-center gap-2 px-2 py-2">
+      <Avatar className="size-8 shrink-0 border border-black/10 shadow-subtle">
+        <Avatar.Fallback className="text-caption-bold">
+          {initials}
+        </Avatar.Fallback>
+      </Avatar>
 
-      <AnimatePresence>
-        {open && (
-          <Menu.Content
-            render={
-              <motion.div
-                initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -4, scale: 0.98 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                onAnimationComplete={() => {
-                  if (!open) actionsRef.current?.unmount();
-                }}
-              />
-            }
-            className="min-w-44 p-1.5 text-card-foreground dark:bg-card"
-          >
-            <div className="px-2 py-1.5 text-body-sm-medium text-muted-foreground">
+      {!collapsed && (
+        <>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-body-sm-medium text-foreground">
               {displayName}
-            </div>
-            <Menu.Item
-              className="rounded-sm p-0 text-foreground hover:bg-secondary focus:bg-secondary"
-              onClick={() => actionsRef.current?.close()}
+            </span>
+            <span className="truncate text-caption text-muted-foreground">
+              {displayName}
+            </span>
+          </div>
+          <form action={signOutToLogin}>
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              title="退出登录"
             >
-              <form action={signOutToLogin} className="w-full">
-                <Button
-                  type="submit"
-                  variant="ghost"
-                  className="w-full justify-start gap-2 px-2 py-1.5 text-body-sm-medium"
-                >
-                  <LogOut aria-hidden="true" size={16} />
-                  退出
-                </Button>
-              </form>
-            </Menu.Item>
-          </Menu.Content>
-        )}
-      </AnimatePresence>
-    </Menu>
+              <LogOut size={16} />
+            </Button>
+          </form>
+        </>
+      )}
+    </div>
   );
 }

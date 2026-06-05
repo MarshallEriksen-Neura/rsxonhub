@@ -51,15 +51,15 @@ DB_PASSWORD=your_secure_password ./deploy.sh start
 ### 架构说明
 
 ```
-┌─────────────┐     ┌──────────┐     ┌─────────┐
-│  Next.js    │────▶│PostgreSQL│     │         │
-│  App :3000  │     │   :5432  │     │         │
-└─────────────┘     └──────────┘     │         │
-                                     │ Redis   │
-┌─────────────┐     ┌──────────┐     │  :6379  │
-│  Worker     │────▶│PostgreSQL│     │         │
-│  (Background)│    │   :5432  │     └─────────┘
+┌─────────────┐     ┌──────────┐
+│  Next.js    │────▶│PostgreSQL│
+│  App :3000  │     │   :5432  │
 └─────────────┘     └──────────┘
+                     ▲
+┌─────────────┐     │
+│  Worker     │─────┘
+│  (Background)│
+└─────────────┘
 ```
 
 ### 详细步骤
@@ -436,9 +436,6 @@ docker-compose logs worker
 
 # 重启 Worker
 docker-compose restart worker
-
-# 验证队列系统
-docker-compose exec redis redis-cli ping
 ```
 
 #### 4. 健康检查失败
@@ -494,13 +491,6 @@ CREATE INDEX IF NOT EXISTS idx_feeds_category_id ON feeds(category_id);
 - `output: 'standalone'` - 减小镜像体积
 - 静态资源缓存
 - 自动代码分割
-
-#### Redis 优化
-
-```bash
-# 调整 Redis 配置 (docker-compose.yml)
-command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-```
 
 ### 监控建议
 

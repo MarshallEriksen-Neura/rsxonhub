@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Inbox, Circle, Star, Sparkles, Plus, Rss } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Inbox, Circle, Star, Plus, Rss } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { type FeedView, type MockFeed } from "@/lib/mock/feed";
-import { useFeedStore } from "@/lib/stores/feed";
+import { useFeedStore, type FeedNavItem, type FeedView } from "@/lib/stores/feed";
 import { AddFeedDialog } from "./add-feed-dialog";
 import { Button } from "@/components/retroui/Button";
 
@@ -21,7 +20,6 @@ const VIEWS: { key: FeedView; label: string; icon: typeof Inbox }[] = [
   { key: "all", label: "全部", icon: Inbox },
   { key: "unread", label: "未读", icon: Circle },
   { key: "star", label: "收藏", icon: Star },
-  { key: "digest", label: "每日精选", icon: Sparkles },
 ];
 
 export function FeedsRail() {
@@ -37,7 +35,7 @@ export function FeedsRail() {
 
   const folders = groupByFolder(feeds);
 
-  async function refreshFeeds() {
+  const refreshFeeds = useCallback(async () => {
     try {
       const response = await fetch("/api/feeds", { cache: "no-store" });
       const payload = await response.json();
@@ -56,11 +54,11 @@ export function FeedsRail() {
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));
     }
-  }
+  }, [setFeeds]);
 
   useEffect(() => {
     void Promise.resolve().then(refreshFeeds);
-  }, []);
+  }, [refreshFeeds]);
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-hairline bg-sidebar">
@@ -161,8 +159,8 @@ type ApiFeed = {
   unread: number | string;
 };
 
-function groupByFolder(feeds: MockFeed[]) {
-  const map = new Map<string, MockFeed[]>();
+function groupByFolder(feeds: FeedNavItem[]) {
+  const map = new Map<string, FeedNavItem[]>();
   for (const feed of feeds) {
     const key = feed.folder ?? "未分组";
     const list = map.get(key) ?? [];

@@ -1,86 +1,113 @@
-import { mockArticles, type Importance } from "@/lib/mock/feed";
+import Link from "next/link";
 import { Badge } from "@/components/retroui/Badge";
+import { Button } from "@/components/retroui/Button";
+import { getDailyDigest } from "@/lib/digest/generate-digest";
 
-// 重要性徽章变体配置
-const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
-  high: "outline",
-  medium: "surface",
-  low: "default",
-};
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-const importanceLabelMap: Record<Importance, string> = {
-  high: "高",
-  medium: "中",
-  low: "低",
-};
-
-/**
- * /digest — 每日精选。
- * 顶部日期切换 + 当天 AI 简报大卡 + 被选入的文章卡列表。
- * header/面包屑由 (app)/layout 统一渲染。
- * 占位:选 importance=high 的文章作为"今日精选"。
- */
-const DATES = ["6月4日", "6月3日", "6月2日"];
-
-export default function DigestPage() {
-  const picks = mockArticles.filter((a) => a.importance === "high");
+export default async function DigestPage() {
+  const digestDate = todayKey();
+  const data = await getDailyDigest(digestDate);
 
   return (
     <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
-          <div className="flex gap-2">
-            {DATES.map((d, i) => (
-              <button
-                key={d}
-                type="button"
-                className={i === 0 ? "pill-tab pill-tab-active" : "pill-tab"}
-              >
-                {d}
-              </button>
-            ))}
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-heading-4 font-semibold text-ink">每日精选</h1>
+            <p className="text-body-sm text-steel">{digestDate}</p>
           </div>
-
-          <section className="card-feature-cream flex flex-col gap-3">
-            <Badge variant="outline" size="sm" className="w-fit">
-              今日简报
-            </Badge>
-            <h2 className="font-head text-heading-4 font-semibold">
-              AI、检索与信息管理:今天值得读的 3 条
-            </h2>
-            <p className="text-body-md">
-              今天的高价值内容集中在 AI 平台竞争与个人信息流治理。简报正文将由
-              每日 digest 生成能力填充(占位)。
-            </p>
-          </section>
-
-          <div className="flex flex-col gap-3">
-            <h3 className="text-body-sm-medium text-muted-foreground">入选文章</h3>
-            {picks.map((a) => (
-              <a
-                key={a.id}
-                href={a.url}
-                target="_blank"
-                rel="noreferrer"
-                className="card-base flex flex-col gap-2 no-underline transition-shadow hover:shadow-card"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-body-md-medium text-foreground">{a.title}</span>
-                  <Badge variant={importanceVariantMap[a.importance]} size="sm">
-                    {importanceLabelMap[a.importance]}
-                  </Badge>
-                </div>
-                <p className="text-body-sm text-muted-foreground">{a.summary}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {a.tags.map((t) => (
-                    <Badge key={t} variant="default" size="sm">
-                      {t}
-                    </Badge>
-                  ))}
-                </div>
-              </a>
-            ))}
-          </div>
+          <Badge variant="outline" size="sm">
+            {data ? "已生成" : "等待生成"}
+          </Badge>
         </div>
+
+        {!data ? (
+          <section className="rounded-lg border border-dashed border-hairline bg-surface-soft px-5 py-8">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-body-md-medium text-ink">今天的简报还没有生成</h2>
+              <p className="text-body-sm text-steel">
+                后台 worker 会从兴趣画像和检索候选中生成日报。请确认订阅源已抓取、兴趣画像已保存，并运行 worker。
+              </p>
+            </div>
+          </section>
+        ) : (
+          <>
+            <section className="rounded-lg border border-hairline bg-background p-5">
+              <div className="flex flex-col gap-3">
+                <Badge variant="outline" size="sm" className="w-fit">
+                  今日简报
+                </Badge>
+                <h2 className="text-heading-4 font-semibold text-ink-deep">
+                  {data.digest.title ?? "今日简报"}
+                </h2>
+                <p className="text-body-md leading-relaxed text-charcoal">
+                  {data.digest.summary}
+                </p>
+                <div className="text-micro text-steel">
+                  model {data.digest.model ?? "unknown"} · tokens {data.digest.tokenCost ?? 0}
+                </div>
+              </div>
+            </section>
+
+            <div className="flex flex-col gap-3">
+              <h3 className="text-body-sm-medium text-muted-foreground">入选文章</h3>
+              {data.items.map((item) => (
+                <article
+                  key={item.articleId}
+                  className="flex flex-col gap-2 border-b border-hairline py-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/feed?article=${item.articleId}`}
+                        className="text-body-md-medium text-foreground no-underline hover:text-primary"
+                      >
+                        {item.title ?? "未命名文章"}
+                      </Link>
+                      <div className="mt-1 text-micro text-steel">
+                        {item.feedTitle ?? "未命名订阅源"}
+                        {item.publishedAt ? ` · ${item.publishedAt.toLocaleString("zh-CN")}` : ""}
+                      </div>
+                    </div>
+                    {item.importance != null ? (
+                      <Badge variant="surface" size="sm">
+                        {item.importance}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <p className="text-body-sm leading-relaxed text-charcoal">
+                    {item.reason ?? item.aiSummary ?? item.summaryRaw ?? "无摘要"}
+                  </p>
+                  {item.tags?.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {item.tags.slice(0, 5).map((tag) => (
+                        <Badge key={tag} variant="default" size="sm">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+                  {item.url ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-fit"
+                      render={
+                        <a href={item.url} target="_blank" rel="noreferrer">
+                          原文
+                        </a>
+                      }
+                    />
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </>
+        )}
       </div>
+    </div>
   );
 }

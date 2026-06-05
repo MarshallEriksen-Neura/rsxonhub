@@ -87,6 +87,40 @@ async function initAIConfigs() {
     return;
   }
 
+  // 检查迁移历史是否存在，如果表存在但没有迁移记录，自动插入
+  try {
+    const [migrationResult] = await db.execute<{ count: number }>(
+      sql`SELECT COUNT(*) as "count" FROM drizzle.__drizzle_migrations`,
+    );
+    const migrationCount = Number(migrationResult?.count ?? 0);
+
+    if (migrationCount === 0) {
+      console.log("⚠️  Business tables exist but no migration history found. Inserting migration records...");
+      
+      // 插入迁移记录（标记所有迁移为已完成）
+      const migrations = [
+        { id: 1, hash: "0000_mighty_black_panther" },
+        { id: 2, hash: "0001_youthful_pyro" },
+        { id: 3, hash: "0002_lying_naoko" },
+        { id: 4, hash: "0003_repair_feed_fetch_runs" },
+        { id: 5, hash: "0004_careful_swarm" },
+      ];
+
+      for (const migration of migrations) {
+        await db.execute(
+          sql`INSERT INTO drizzle.__drizzle_migrations (id, hash, created_at) 
+              VALUES (${migration.id}, ${migration.hash}, EXTRACT(EPOCH FROM NOW()) * 1000)
+              ON CONFLICT DO NOTHING`,
+        );
+      }
+      
+      console.log("✅ Migration records inserted successfully.");
+    }
+  } catch (error) {
+    // 如果 __drizzle_migrations 表不存在，忽略错误
+    console.log("Migration table does not exist yet. Will be created by drizzle-kit migrate.");
+  }
+
   // 初始化 chat 配置
   await db
     .insert(aiConfigs)

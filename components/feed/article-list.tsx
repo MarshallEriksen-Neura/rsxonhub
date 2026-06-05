@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { RefreshCw, Search, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type Importance } from "@/lib/mock/feed";
 import { useFeedStore } from "@/lib/stores/feed";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/retroui/Badge";
 import { Input } from "@/components/retroui/Input";
 import { Button } from "@/components/retroui/Button";
 import { VirtualScroll, useVirtualScroll } from "./virtual-scroll";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // 重要性徽章变体配置
 const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
@@ -41,15 +41,29 @@ export function ArticleList() {
   const selectedFeedId = useFeedStore((s) => s.selectedFeedId);
   const selectedArticleId = useFeedStore((s) => s.selectedArticleId);
   const selectArticle = useFeedStore((s) => s.selectArticle);
+  const setFeeds = useFeedStore((s) => s.setFeeds);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // 使用虚拟滚动 Hook
-  const virtualScroll = useVirtualScroll<ArticleView>();
+  const {
+    items,
+    state,
+    loadInitial,
+    loadMore,
+    retry,
+  } = useVirtualScroll<ArticleView>();
   
-  const fetchArticles = async (page: number, size: number) => {
+  const fetchArticles = useCallback(async (
+    _page: number,
+    size: number,
+    cursor?: string | null,
+  ) => {
     const params = new URLSearchParams({
       view,
-      limit: String(page * size),
+      limit: String(size),
     });
+    if (cursor) params.set("cursor", cursor);
     if (selectedFeedId) params.set("feedId", String(selectedFeedId));
     if (search.trim()) params.set("search", search.trim());
 
@@ -59,20 +73,55 @@ export function ArticleList() {
       throw new Error(payload.message ?? "文章加载失败");
     }
 
-    const allArticles = payload.articles as ArticleView[];
-    const start = (page - 1) * size;
-    const pageArticles = allArticles.slice(start, page * size);
-    
     return {
-      data: pageArticles,
-      hasMore: allArticles.length >= page * size,
+      data: payload.articles as ArticleView[],
+      hasMore: Boolean(payload.pagination?.hasMore),
+      nextCursor: payload.pagination?.nextCursor ?? null,
     };
-  };
+  }, [search, selectedFeedId, view]);
   
   // 当 view 或 search 变化时重新加载
   useEffect(() => {
-    virtualScroll.loadInitial(fetchArticles);
-  }, [view, search, selectedFeedId]);
+    void loadInitial(fetchArticles);
+  }, [fetchArticles, loadInitial]);
+
+  async function refreshFeedsSnapshot() {
+    const response = await fetch("/api/feeds", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message ?? "订阅源加载失败");
+    }
+    setFeeds(
+      payload.feeds.map((feed: ApiFeed) => ({
+        id: feed.id,
+        title: feed.title ?? feed.url,
+        folder: feed.folder,
+        unread: Number(feed.unread ?? 0),
+      })),
+    );
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const response = await fetch("/api/feeds/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(selectedFeedId ? { feedId: selectedFeedId } : {}),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message ?? "刷新订阅源失败");
+      }
+      await refreshFeedsSnapshot();
+      await loadInitial(fetchArticles);
+    } catch (error) {
+      setRefreshError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return (
     <section className="flex h-full w-96 shrink-0 flex-col overflow-hidden border-r border-hairline bg-background">
@@ -87,24 +136,45 @@ export function ArticleList() {
             className="pl-9 py-2 text-body-sm shadow-none focus:shadow-xs"
           />
         </div>
-        <div className="flex gap-2">
-          <Button variant="default" size="sm" className="rounded-full px-3">
-            最新
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-full px-3">
-            重要度
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-2">
+            <Button variant="default" size="sm" className="rounded-full px-3">
+              最新
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-full px-3">
+              重要度
+            </Button>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            title={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
+            aria-label={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            className="shrink-0 rounded-full"
+          >
+            <RefreshCw
+              size={15}
+              aria-hidden
+              className={cn(refreshing && "animate-spin")}
+            />
           </Button>
         </div>
+        {refreshError ? (
+          <p className="text-micro text-destructive">{refreshError}</p>
+        ) : null}
       </div>
 
       {/* 虚拟滚动文章列表 */}
       <VirtualScroll
-        items={virtualScroll.items}
+        items={items}
         height={0}
         estimatedItemHeight={180}
-        state={virtualScroll.state}
-        onLoadMore={() => virtualScroll.loadMore(fetchArticles)}
-        onRetry={() => virtualScroll.retry(fetchArticles)}
+        state={state}
+        onLoadMore={() => loadMore(fetchArticles)}
+        onRetry={() => retry(fetchArticles)}
         emptyState={{
           title: "暂无文章",
           description: "该视图下暂无匹配的文章",
@@ -126,6 +196,17 @@ export function ArticleList() {
   );
 }
 
+async function updateArticleStatus(
+  articleId: number,
+  status: ArticleView["status"],
+) {
+  await fetch("/api/articles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ articleId, status }),
+  });
+}
+
 function ArticleListItem({
   article,
   active,
@@ -135,12 +216,38 @@ function ArticleListItem({
   active: boolean;
   onSelect: () => void;
 }) {
-  const unread = article.status === "unread";
+  const [localStatus, setLocalStatus] = useState(article.status);
+  const unread = localStatus === "unread";
+  const starred = localStatus === "star";
+
+  const handleClick = async () => {
+    if (unread) {
+      setLocalStatus("read");
+      try {
+        await updateArticleStatus(article.id, "read");
+      } catch {
+        setLocalStatus("unread");
+      }
+    }
+    onSelect();
+  };
+
+  const handleStar = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = starred ? "read" : "star";
+    setLocalStatus(next);
+    try {
+      await updateArticleStatus(article.id, next);
+    } catch {
+      setLocalStatus(localStatus);
+    }
+  };
+
   return (
-    <li>
+    <li className="group relative">
       <button
         type="button"
-        onClick={onSelect}
+        onClick={handleClick}
         className={cn(
           "flex w-full flex-col gap-2 px-5 py-4 text-left transition-all duration-150",
           active
@@ -197,6 +304,21 @@ function ArticleListItem({
           )}
         </div>
       </button>
+
+      {/* 收藏按钮 */}
+      <button
+        type="button"
+        onClick={handleStar}
+        aria-label={starred ? "取消收藏" : "收藏"}
+        className={cn(
+          "absolute right-3 top-4 rounded p-1 transition-opacity",
+          starred
+            ? "opacity-100 text-amber-400"
+            : "opacity-0 group-hover:opacity-100 text-stone hover:text-amber-400",
+        )}
+      >
+        <Star size={15} fill={starred ? "currentColor" : "none"} aria-hidden />
+      </button>
     </li>
   );
 }
@@ -216,6 +338,14 @@ export type ArticleView = {
   importance: Importance;
   status: "unread" | "read" | "star" | "later";
   content: string;
+};
+
+type ApiFeed = {
+  id: number;
+  url: string;
+  title: string | null;
+  folder: string | null;
+  unread: number | string;
 };
 
 function formatTime(iso: string): string {

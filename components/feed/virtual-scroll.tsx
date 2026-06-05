@@ -101,6 +101,18 @@ const DEFAULT_ERROR_STATE = {
 
 const DEFAULT_LOADING_MORE_TEXT = "加载中...";
 
+type VirtualScrollFetchResult<T> = {
+  data: T[];
+  hasMore: boolean;
+  nextCursor?: string | null;
+};
+
+type VirtualScrollFetcher<T> = (
+  page: number,
+  size: number,
+  cursor?: string | null,
+) => Promise<VirtualScrollFetchResult<T>>;
+
 // ── 组件实现 ──
 
 export function VirtualScroll<T = unknown>({
@@ -131,7 +143,8 @@ export function VirtualScroll<T = unknown>({
 
   const parentRef = React.useRef<HTMLDivElement>(null);
 
-  // 虚拟滚动器
+  // TanStack Virtual returns imperative helpers that React Compiler cannot memoize safely.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,
@@ -246,9 +259,10 @@ export function VirtualScroll<T = unknown>({
     <div
       ref={parentRef}
       className={cn(
-        "h-full w-full overflow-auto",
+        "w-full overflow-auto",
         containerClassName,
       )}
+      style={{ height: height > 0 ? height : undefined }}
     >
       {/* Header */}
       {header && <div className="sticky top-0 z-10 bg-background">{header}</div>}
@@ -317,7 +331,6 @@ export function useVirtualScroll<T = unknown>(options?: {
   const [items, setItems] = React.useState<VirtualScrollItem<T>[]>(
     options?.initialItems ?? [],
   );
-  const [page, setPage] = React.useState(1);
   const [state, setState] = React.useState<VirtualScrollState>({
     isLoading: false,
     isLoadingMore: false,
@@ -325,24 +338,23 @@ export function useVirtualScroll<T = unknown>(options?: {
     isEmpty: false,
     error: null,
   });
+  const nextCursorRef = React.useRef<string | null>(null);
 
   const pageSize = options?.pageSize ?? 20;
 
   // 加载第一页
   const loadInitial = React.useCallback(
-    async (fetcher: (page: number, size: number) => Promise<{
-      data: T[];
-      hasMore: boolean;
-    }>) => {
+    async (fetcher: VirtualScrollFetcher<T>) => {
       setState((s) => ({ ...s, isLoading: true, error: null }));
+      nextCursorRef.current = null;
       try {
-        const result = await fetcher(1, pageSize);
+        const result = await fetcher(1, pageSize, null);
         const newItems: VirtualScrollItem<T>[] = result.data.map((data, index) => ({
-          id: `${page}-${index}`,
+          id: `1-${index}`,
           data,
         }));
         setItems(newItems);
-        setPage(1);
+        nextCursorRef.current = result.nextCursor ?? null;
         setState({
           isLoading: false,
           isLoadingMore: false,
@@ -365,22 +377,19 @@ export function useVirtualScroll<T = unknown>(options?: {
 
   // 加载更多
   const loadMore = React.useCallback(
-    async (fetcher: (page: number, size: number) => Promise<{
-      data: T[];
-      hasMore: boolean;
-    }>) => {
+    async (fetcher: VirtualScrollFetcher<T>) => {
       if (state.isLoadingMore || !state.hasMore) return;
 
       setState((s) => ({ ...s, isLoadingMore: true }));
       try {
-        const nextPage = page + 1;
-        const result = await fetcher(nextPage, pageSize);
+        const nextPage = (Math.ceil(items.length / pageSize) || 1) + 1;
+        const result = await fetcher(nextPage, pageSize, nextCursorRef.current);
         const newItems: VirtualScrollItem<T>[] = result.data.map((data, index) => ({
           id: `${nextPage}-${index}`,
           data,
         }));
+        nextCursorRef.current = result.nextCursor ?? null;
         setItems((prev) => [...prev, ...newItems]);
-        setPage(nextPage);
         setState((s) => ({
           ...s,
           isLoadingMore: false,
@@ -394,15 +403,12 @@ export function useVirtualScroll<T = unknown>(options?: {
         }));
       }
     },
-    [page, pageSize, state.isLoadingMore, state.hasMore],
+    [items.length, pageSize, state.isLoadingMore, state.hasMore],
   );
 
   // 重试
   const retry = React.useCallback(
-    (fetcher: (page: number, size: number) => Promise<{
-      data: T[];
-      hasMore: boolean;
-    }>) => {
+    (fetcher: VirtualScrollFetcher<T>) => {
       loadInitial(fetcher);
     },
     [loadInitial],
@@ -411,7 +417,7 @@ export function useVirtualScroll<T = unknown>(options?: {
   // 重置
   const reset = React.useCallback(() => {
     setItems([]);
-    setPage(1);
+    nextCursorRef.current = null;
     setState({
       isLoading: false,
       isLoadingMore: false,

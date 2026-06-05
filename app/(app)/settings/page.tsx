@@ -1,6 +1,10 @@
 import { SettingsWorkspace } from "@/components/settings/settings-workspace";
+import {
+  getAIModelPresetSnapshot,
+  getInterestProfileSnapshot,
+  getSettingsObservabilitySnapshot,
+} from "@/app/(app)/settings/actions";
 import { getPublicAIConfigSnapshot } from "@/lib/ai/config";
-import { getInterestProfileSnapshot } from "@/app/(app)/settings/actions";
 
 /**
  * /settings — 设置。左侧分区导航 + 右侧配置面板。
@@ -9,10 +13,19 @@ import { getInterestProfileSnapshot } from "@/app/(app)/settings/actions";
  * AI 配置由服务端读取 DB 快照后传给客户端工作区。
  */
 export default async function SettingsPage() {
-  const [aiConfig, interestProfile] = await Promise.all([
-    getPublicAIConfigSnapshot(),
+  const aiConfig = await getPublicAIConfigSnapshot();
+  const [aiModelPresets, interestProfile, observability] = await Promise.all([
+    getAIModelPresetSnapshot(aiConfig),
     getInterestProfileSnapshot(),
+    getSettingsObservabilitySnapshot(),
   ]);
 
-  return <SettingsWorkspace aiConfig={aiConfig} interestProfile={interestProfile} />;
+  return (
+    <SettingsWorkspace
+      aiConfig={aiConfig}
+      aiModelPresets={aiModelPresets}
+      interestProfile={interestProfile}
+      observability={observability}
+    />
+  );
 }

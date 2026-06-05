@@ -62,12 +62,3 @@ function ThemeTransitionOverlay({
     </div>
   );
 }
-
-/**
- * 防 FOUC 内联脚本:在 React 注水前就根据 localStorage / system 设好 .dark。
- * 放在 <head>,用 dangerouslySetInnerHTML 注入。
- */
-export function ThemeScript() {
-  const code = `(function(){try{var s=localStorage.getItem('rsxonhub-theme');var t=s?JSON.parse(s).state.theme:'system';var d=t==='dark'||((t==='system'||!t)&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
-  return <script dangerouslySetInnerHTML={{ __html: code }} />;
-}

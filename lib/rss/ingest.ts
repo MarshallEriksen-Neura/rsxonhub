@@ -22,6 +22,7 @@ export type IngestFeedResult = {
   itemCount: number;
   insertedCount: number;
   updatedCount: number;
+  changedArticleIds: number[];
 };
 
 export async function subscribeFeed(input: SubscribeFeedInput) {
@@ -132,7 +133,7 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
 
 async function upsertArticles(feedId: number, items: NormalizedArticle[]) {
   if (items.length === 0) {
-    return { insertedCount: 0, updatedCount: 0 };
+    return { insertedCount: 0, updatedCount: 0, changedArticleIds: [] };
   }
 
   const guids = items.map((item) => item.guid);
@@ -145,6 +146,7 @@ async function upsertArticles(feedId: number, items: NormalizedArticle[]) {
   return db.transaction(async (tx) => {
     let insertedCount = 0;
     let updatedCount = 0;
+    const changedArticleIds: number[] = [];
 
     for (const item of items) {
       const [article] = await tx
@@ -182,6 +184,8 @@ async function upsertArticles(feedId: number, items: NormalizedArticle[]) {
         })
         .returning({ id: articles.id });
 
+      changedArticleIds.push(article.id);
+
       if (existingGuids.has(item.guid)) {
         updatedCount += 1;
       } else {
@@ -193,6 +197,6 @@ async function upsertArticles(feedId: number, items: NormalizedArticle[]) {
       }
     }
 
-    return { insertedCount, updatedCount };
+    return { insertedCount, updatedCount, changedArticleIds };
   });
 }

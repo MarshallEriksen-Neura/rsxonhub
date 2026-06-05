@@ -1,22 +1,49 @@
 "use server";
 
+import { compare, hash } from "bcryptjs";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { hash } from "bcryptjs";
+import { auth } from "@/auth";
 import {
   getAIConfig,
-  saveAIConfigSnapshot,
+  getChatConfig,
+  getEmbeddingConfig,
+  parseAIConfigInput,
+  upsertAIConfigs,
   type AIConfigKind,
   type PublicAIConfigSnapshot,
   type SaveAIConfigInput,
 } from "@/lib/ai/config";
-import { getActiveInterestProfile, saveInterestProfile } from "@/lib/interests/profile";
-import { enqueueAnalysisForCurrentCandidates } from "@/lib/jobs/feed-jobs";
-import { auth } from "@/auth";
+import {
+  buildNextAIConfigPlan,
+  embeddingConfigPlanChanged,
+} from "@/lib/ai/config-plan";
+import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
+import {
+  createEmbeddingRebuildRun,
+  getLatestEmbeddingRebuildRun,
+  probeEmbeddingDimension,
+} from "@/lib/ai/embedding-rebuild";
+import {
+  inferModelCapabilities,
+  type AIModelCapability,
+  type AIModelPresetSnapshot,
+} from "@/lib/ai/model-presets";
 import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { compare } from "bcryptjs";
+import {
+  aiModelPresets,
+  articleChunks,
+  feedFetchRuns,
+  feeds,
+  usageLogs,
+  users,
+} from "@/lib/db/schema";
+import { getActiveInterestProfile, saveInterestProfile } from "@/lib/interests/profile";
+import {
+  enqueueAnalysisForCurrentCandidates,
+  enqueueArticleEmbedding,
+} from "@/lib/jobs/feed-jobs";
 
 export type SaveAISettingsState =
   | {
@@ -27,19 +54,71 @@ export type SaveAISettingsState =
   | {
       ok: false;
       message: string;
+    }
+  | {
+      ok: false;
+      kind: "embedding-rebuild-required";
+      message: string;
+      existingChunkCount: number;
+      probedDimension: number;
+      expectedDimension: number;
     };
 
 export async function saveAISettings(
-  input: SaveAIConfigInput,
+  input: SaveAIConfigInput & { confirmEmbeddingRebuild?: boolean },
 ): Promise<SaveAISettingsState> {
   try {
-    const config = await saveAIConfigSnapshot(input);
+    const parsed = parseAIConfigInput(input);
+    const [existingChat, existingEmbedding] = await Promise.all([
+      getChatConfig(),
+      getEmbeddingConfig(),
+    ]);
+    const { chat, embedding } = buildNextAIConfigPlan(parsed, existingChat, existingEmbedding);
+    const embeddingChanged = embeddingConfigPlanChanged(existingEmbedding, embedding);
+    let rebuildRunId: number | null = null;
+
+    if (embeddingChanged) {
+      const probedDimension = await probeEmbeddingDimension();
+      if (probedDimension !== DEFAULT_EMBEDDING_DIM) {
+        return {
+          ok: false,
+          message: `向量模型维度为 ${probedDimension},但当前 article_chunks.embedding 需要 ${DEFAULT_EMBEDDING_DIM}。请先调整迁移和重建计划。`,
+        };
+      }
+
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(articleChunks);
+      const existingChunkCount = Number(count ?? 0);
+
+      if (existingChunkCount > 0 && !input.confirmEmbeddingRebuild) {
+        return {
+          ok: false,
+          kind: "embedding-rebuild-required",
+          message: "向量模型或 Base URL 已变化,现有文章向量需要后台重建。确认后保存会立即返回,重建在 worker 中静默执行。",
+          existingChunkCount,
+          probedDimension,
+          expectedDimension: DEFAULT_EMBEDDING_DIM,
+        };
+      }
+    }
+
+    const config = await upsertAIConfigs(chat, embedding);
+
+    if (embeddingChanged) {
+      const run = await createEmbeddingRebuildRun();
+      rebuildRunId = run.id;
+      await enqueueArticleEmbedding({ rebuildRunId });
+    }
+
     revalidatePath("/settings");
 
     return {
       ok: true,
       config,
-      message: "AI 配置已保存。",
+      message: rebuildRunId
+        ? `AI 配置已保存,向量重建任务 #${rebuildRunId} 已入队。`
+        : "AI 配置已保存。",
     };
   } catch (error) {
     return {
@@ -59,13 +138,27 @@ export type FetchAIModelsState =
   | {
       ok: true;
       kind: AIConfigKind;
-      models: string[];
+      models: AIModelCapability[];
       message: string;
     }
   | {
       ok: false;
       message: string;
     };
+
+export async function getAIModelPresetSnapshot(
+  config: PublicAIConfigSnapshot,
+): Promise<AIModelPresetSnapshot> {
+  const [chatRows, embeddingRows] = await Promise.all([
+    getAIModelPresets("chat", config.chat.baseUrl),
+    getAIModelPresets("embedding", config.embedding.baseUrl),
+  ]);
+
+  return {
+    chat: chatRows,
+    embedding: embeddingRows,
+  };
+}
 
 export async function fetchAIModels(
   input: z.input<typeof fetchAIModelsSchema>,
@@ -100,7 +193,7 @@ export async function fetchAIModels(
     }
 
     const payload = await response.json();
-    const models = parseModelIds(payload);
+    const models = parseModelCapabilities(payload, parsed.kind);
 
     if (models.length === 0) {
       return {
@@ -109,11 +202,14 @@ export async function fetchAIModels(
       };
     }
 
+    await upsertAIModelPresets(parsed.kind, parsed.baseUrl, models);
+    revalidatePath("/settings");
+
     return {
       ok: true,
       kind: parsed.kind,
       models,
-      message: `已获取 ${models.length} 个模型。`,
+      message: `已获取 ${models.length} 个模型,已自动区分对话/向量能力。`,
     };
   } catch (error) {
     return {
@@ -123,14 +219,72 @@ export async function fetchAIModels(
   }
 }
 
-const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "当前密码不能为空"),
-  newPassword: z.string().min(8, "新密码至少需要8个字符"),
-  confirmPassword: z.string(),
-}).refine((data) => data.newPassword === data.confirmPassword, {
-  message: "两次输入的新密码不一致",
-  path: ["confirmPassword"],
-});
+async function getAIModelPresets(kind: AIConfigKind, baseUrl: string) {
+  const rows = await db
+    .select({
+      model: aiModelPresets.model,
+      supportsChat: aiModelPresets.supportsChat,
+      supportsEmbedding: aiModelPresets.supportsEmbedding,
+    })
+    .from(aiModelPresets)
+    .where(
+      and(
+        eq(aiModelPresets.kind, kind),
+        eq(aiModelPresets.baseUrl, normalizeBaseUrl(baseUrl)),
+      ),
+    )
+    .orderBy(aiModelPresets.model);
+
+  return rows.map((row) => ({
+    model: row.model,
+    supportsChat: Boolean(row.supportsChat),
+    supportsEmbedding: Boolean(row.supportsEmbedding),
+  }));
+}
+
+async function upsertAIModelPresets(
+  kind: AIConfigKind,
+  baseUrl: string,
+  models: AIModelCapability[],
+) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+
+  await db
+    .insert(aiModelPresets)
+    .values(
+      models.map((model) => ({
+        kind,
+        baseUrl: normalizedBaseUrl,
+        model: model.model,
+        supportsChat: model.supportsChat,
+        supportsEmbedding: model.supportsEmbedding,
+        lastFetchedAt: sql`now()`,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: [
+        aiModelPresets.kind,
+        aiModelPresets.baseUrl,
+        aiModelPresets.model,
+      ],
+      set: {
+        supportsChat: sql`excluded.supports_chat`,
+        supportsEmbedding: sql`excluded.supports_embedding`,
+        lastFetchedAt: sql`now()`,
+      },
+    });
+}
+
+const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "当前密码不能为空"),
+    newPassword: z.string().min(8, "新密码至少需要8个字符"),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "两次输入的新密码不一致",
+    path: ["confirmPassword"],
+  });
 
 export type ChangePasswordState =
   | {
@@ -177,7 +331,6 @@ export async function changePassword(
       };
     }
 
-    // 验证当前密码
     const isPasswordValid = await compare(parsed.data.currentPassword, user.passwordHash);
     if (!isPasswordValid) {
       return {
@@ -187,13 +340,8 @@ export async function changePassword(
       };
     }
 
-    // 哈希新密码
     const newPasswordHash = await hash(parsed.data.newPassword, 12);
-
-    // 更新密码
-    await db.update(users)
-      .set({ passwordHash: newPasswordHash })
-      .where(eq(users.id, userId));
+    await db.update(users).set({ passwordHash: newPasswordHash }).where(eq(users.id, userId));
 
     revalidatePath("/settings");
 
@@ -257,12 +405,86 @@ export async function saveInterestProfileSettings(
   }
 }
 
-function modelsUrl(baseUrl: string) {
-  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL("models", normalizedBase).toString();
+export async function getSettingsObservabilitySnapshot() {
+  const [latestRebuild, recentFetchRuns, usageTotals] = await Promise.all([
+    getLatestEmbeddingRebuildRun(),
+    db
+      .select({
+        id: feedFetchRuns.id,
+        feedId: feedFetchRuns.feedId,
+        feedTitle: feeds.title,
+        status: feedFetchRuns.status,
+        itemCount: feedFetchRuns.itemCount,
+        insertedCount: feedFetchRuns.insertedCount,
+        updatedCount: feedFetchRuns.updatedCount,
+        error: feedFetchRuns.error,
+        startedAt: feedFetchRuns.startedAt,
+        finishedAt: feedFetchRuns.finishedAt,
+      })
+      .from(feedFetchRuns)
+      .innerJoin(feeds, eq(feeds.id, feedFetchRuns.feedId))
+      .orderBy(desc(feedFetchRuns.startedAt))
+      .limit(8),
+    db
+      .select({
+        kind: usageLogs.kind,
+        model: usageLogs.model,
+        calls: sql<number>`count(*)`,
+        tokens: sql<number>`coalesce(sum(${usageLogs.tokens}), 0)`,
+        cost: sql<number>`coalesce(sum(${usageLogs.cost}), 0)`,
+      })
+      .from(usageLogs)
+      .groupBy(usageLogs.kind, usageLogs.model)
+      .orderBy(usageLogs.kind, usageLogs.model),
+  ]);
+
+  return {
+    latestRebuild: latestRebuild
+      ? {
+          id: latestRebuild.id,
+          status: latestRebuild.status,
+          model: latestRebuild.model,
+          baseUrl: latestRebuild.baseUrl,
+          dimension: latestRebuild.dimension,
+          articleCount: latestRebuild.articleCount,
+          chunkCount: latestRebuild.chunkCount,
+          error: latestRebuild.error,
+          startedAt: latestRebuild.startedAt?.toISOString() ?? null,
+          finishedAt: latestRebuild.finishedAt?.toISOString() ?? null,
+          createdAt: latestRebuild.createdAt.toISOString(),
+        }
+      : null,
+    recentFetchRuns: recentFetchRuns.map((run) => ({
+      id: run.id,
+      feedId: run.feedId,
+      feedTitle: run.feedTitle ?? `Feed #${run.feedId}`,
+      status: run.status,
+      itemCount: run.itemCount,
+      insertedCount: run.insertedCount,
+      updatedCount: run.updatedCount,
+      error: run.error,
+      startedAt: run.startedAt.toISOString(),
+      finishedAt: run.finishedAt?.toISOString() ?? null,
+    })),
+    usageTotals: usageTotals.map((row) => ({
+      kind: row.kind,
+      model: row.model,
+      calls: Number(row.calls ?? 0),
+      tokens: Number(row.tokens ?? 0),
+      cost: Number(row.cost ?? 0),
+    })),
+  };
 }
 
-function parseModelIds(payload: unknown) {
+function modelsUrl(baseUrl: string) {
+  return new URL("models", normalizeBaseUrl(baseUrl)).toString();
+}
+
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function parseModelCapabilities(payload: unknown, fallbackKind: AIConfigKind) {
   if (
     typeof payload !== "object" ||
     payload === null ||
@@ -272,18 +494,30 @@ function parseModelIds(payload: unknown) {
     return [];
   }
 
-  return Array.from(
-    new Set(
-      payload.data
-        .map((item) =>
-          typeof item === "object" &&
-          item !== null &&
-          "id" in item &&
-          typeof item.id === "string"
-            ? item.id
-            : undefined,
-        )
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
+  const byModel = new Map<string, AIModelCapability>();
+
+  for (const item of payload.data) {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      !("id" in item) ||
+      typeof item.id !== "string"
+    ) {
+      continue;
+    }
+
+    const inferred = inferModelCapabilities(item.id, item, fallbackKind);
+    const existing = byModel.get(item.id);
+    byModel.set(item.id, {
+      model: item.id,
+      supportsChat: Boolean(existing?.supportsChat || inferred.supportsChat),
+      supportsEmbedding: Boolean(
+        existing?.supportsEmbedding || inferred.supportsEmbedding,
+      ),
+    });
+  }
+
+  return Array.from(byModel.values()).sort((a, b) =>
+    a.model.localeCompare(b.model),
+  );
 }

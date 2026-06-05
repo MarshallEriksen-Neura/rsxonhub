@@ -1,6 +1,9 @@
+import { embed } from "ai";
 import { desc, eq, sql } from "drizzle-orm";
+import { embeddingModel, nvidiaEmbedOptions, withAIRequestRetry } from "@/lib/ai";
+import { getEmbeddingConfig } from "@/lib/ai/config";
 import { db } from "@/lib/db";
-import { interestProfiles } from "@/lib/db/schema";
+import { interestProfiles, usageLogs } from "@/lib/db/schema";
 import { stableHash } from "@/lib/rss/hash";
 
 export type ActiveInterestProfile = {
@@ -8,6 +11,7 @@ export type ActiveInterestProfile = {
   content: string;
   contentHash: string;
   version: number;
+  embedding: number[] | null;
 };
 
 export async function getActiveInterestProfile() {
@@ -17,6 +21,7 @@ export async function getActiveInterestProfile() {
       content: interestProfiles.content,
       contentHash: interestProfiles.contentHash,
       version: interestProfiles.version,
+      embedding: interestProfiles.embedding,
     })
     .from(interestProfiles)
     .where(eq(interestProfiles.isActive, 1))
@@ -38,6 +43,7 @@ export async function saveInterestProfile(content: string) {
     return { profile: current, changed: false };
   }
 
+  const embeddingResult = await embedInterestProfile(normalized);
   const [maxVersionRow] = await db
     .select({ maxVersion: sql<number>`coalesce(max(${interestProfiles.version}), 0)` })
     .from(interestProfiles);
@@ -51,6 +57,7 @@ export async function saveInterestProfile(content: string) {
       .values({
         content: normalized,
         contentHash,
+        embedding: embeddingResult.embedding,
         version: nextVersion,
         isActive: 1,
         updatedAt: sql`now()`,
@@ -60,8 +67,18 @@ export async function saveInterestProfile(content: string) {
         content: interestProfiles.content,
         contentHash: interestProfiles.contentHash,
         version: interestProfiles.version,
+        embedding: interestProfiles.embedding,
       });
   });
+
+  if (embeddingResult.tokens !== null) {
+    await db.insert(usageLogs).values({
+      kind: "embedding",
+      model: embeddingResult.model,
+      tokens: embeddingResult.tokens,
+      cost: null,
+    });
+  }
 
   return { profile, changed: true };
 }
@@ -76,4 +93,21 @@ export function tokenizeInterest(content: string) {
         .filter((term) => term.length >= 2),
     ),
   ).slice(0, 64);
+}
+
+async function embedInterestProfile(content: string) {
+  const [model, config] = await Promise.all([embeddingModel(), getEmbeddingConfig()]);
+  const result = await withAIRequestRetry(() =>
+    embed({
+      model,
+      value: content,
+      providerOptions: nvidiaEmbedOptions("query"),
+    }),
+  );
+
+  return {
+    embedding: result.embedding,
+    model: config.model,
+    tokens: result.usage?.tokens ?? null,
+  };
 }

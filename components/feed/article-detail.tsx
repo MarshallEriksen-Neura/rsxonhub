@@ -8,7 +8,10 @@ import {
   FileText,
   Sparkles,
   ChevronDown,
+  X,
+  Star,
 } from "lucide-react";
+import { Dialog } from "@/components/retroui/Dialog";
 import { type Importance } from "@/lib/mock/feed";
 import type { ArticleView } from "@/components/feed/article-list";
 import { useFeedStore } from "@/lib/stores/feed";
@@ -44,6 +47,10 @@ export function ArticleDetail() {
   const selectedArticleId = useFeedStore((s) => s.selectedArticleId);
   const [article, setArticle] = useState<ArticleView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [heroImageLoaded, setHeroImageLoaded] = useState(false);
+  const [starred, setStarred] = useState(false);
+  const openLightbox = (src: string) => setLightbox(src);
 
   useEffect(() => {
     if (!selectedArticleId) {
@@ -62,7 +69,10 @@ export function ArticleDetail() {
           throw new Error(payload.message ?? "文章加载失败");
         }
         if (!cancelled) {
-          setArticle(payload.articles[0] ?? null);
+          const loaded = payload.articles[0] ?? null;
+          setArticle(loaded);
+          setStarred(loaded?.status === "star");
+          setHeroImageLoaded(false);
           setError(null);
         }
       } catch (loadError) {
@@ -103,6 +113,28 @@ export function ArticleDetail() {
     <article className="flex flex-1 flex-col overflow-y-auto bg-background">
       {/* 顶部操作栏 */}
       <div className="sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-hairline bg-background/80 px-6 py-3 backdrop-blur-sm">
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label={starred ? "取消收藏" : "收藏"}
+          onClick={async () => {
+            const next = starred ? "read" : "star";
+            setStarred(!starred);
+            try {
+              await fetch("/api/articles", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ articleId: visibleArticle.id, status: next }),
+              });
+            } catch {
+              setStarred(starred);
+            }
+          }}
+          className={starred ? "text-amber-400" : ""}
+        >
+          <Star size={15} fill={starred ? "currentColor" : "none"} aria-hidden />
+          {starred ? "已收藏" : "收藏"}
+        </Button>
         <Button
           size="sm"
           variant="outline"
@@ -162,21 +194,37 @@ export function ArticleDetail() {
         {/* AI 摘要(按需加载) */}
         <AiSummary article={visibleArticle} />
 
-        {/* 文章题图(订阅源提供的封面图,仅展示) */}
+        {/* 文章题图(点击可放大) */}
         {visibleArticle.imageUrl ? (
-          <figure className="m-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={visibleArticle.imageUrl}
-              alt={visibleArticle.title ?? ""}
-              loading="lazy"
-              className="w-full rounded-lg border border-hairline"
-            />
-          </figure>
+          <MediaLightbox src={visibleArticle.imageUrl} alt={visibleArticle.title ?? ""}>
+            <div className="relative overflow-hidden rounded-lg border border-hairline bg-surface">
+              {!heroImageLoaded ? (
+                <Skeleton className="absolute inset-0 h-full min-h-56 w-full rounded-lg" />
+              ) : null}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={visibleArticle.imageUrl}
+                alt={visibleArticle.title ?? ""}
+                loading="lazy"
+                onLoad={() => setHeroImageLoaded(true)}
+                onError={() => setHeroImageLoaded(true)}
+                className={cn(
+                  "block w-full cursor-zoom-in transition-opacity hover:opacity-90",
+                  heroImageLoaded ? "opacity-100" : "min-h-56 opacity-0",
+                )}
+              />
+            </div>
+          </MediaLightbox>
         ) : null}
 
         {/* 文章正文(已净化的 RSS HTML:图片/视频/嵌入按 .prose-article 排版) */}
-        <ArticleContent html={visibleArticle.content} />
+        <ArticleContent html={visibleArticle.content} onMediaClick={openLightbox} />
+
+        {/* 全局 lightbox */}
+        <MediaLightboxDialog
+          src={lightbox}
+          onClose={() => setLightbox(null)}
+        />
       </div>
     </article>
   );
@@ -256,5 +304,69 @@ function AiSummary({ article }: { article: ArticleView }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** 封面图点击触发 lightbox 的包装 */
+function MediaLightbox({
+  src,
+  alt,
+  children,
+}: {
+  src: string;
+  alt: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Dialog>
+      <Dialog.Trigger className="block w-full" aria-label="查看大图">
+        <figure className="m-0">{children}</figure>
+      </Dialog.Trigger>
+      <Dialog.Content size="4xl" className="bg-black/90 border-0 p-0">
+        <button
+          type="button"
+          className="absolute right-3 top-3 z-10 rounded-full bg-black/50 p-1 text-white hover:bg-black/80"
+          aria-label="关闭"
+        >
+          <Dialog.Close className="flex">
+            <X size={20} aria-hidden />
+          </Dialog.Close>
+        </button>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={alt} className="max-h-[90vh] w-full object-contain" />
+      </Dialog.Content>
+    </Dialog>
+  );
+}
+
+/** 正文内图片/视频的全局 lightbox（受控） */
+function MediaLightboxDialog({
+  src,
+  onClose,
+}: {
+  src: string | null;
+  onClose: () => void;
+}) {
+  if (!src) return null;
+  const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(src);
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Content size="4xl" className="bg-black/90 border-0 p-0">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 rounded-full bg-black/50 p-1 text-white hover:bg-black/80"
+          aria-label="关闭"
+        >
+          <X size={20} aria-hidden />
+        </button>
+        {isVideo ? (
+          <video src={src} controls className="max-h-[90vh] w-full" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt="" className="max-h-[90vh] w-full object-contain" />
+        )}
+      </Dialog.Content>
+    </Dialog>
   );
 }

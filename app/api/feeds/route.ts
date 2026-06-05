@@ -3,14 +3,21 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { articles, feeds, readStates, subscriptions } from "@/lib/db/schema";
-import { enqueueFeedFetch } from "@/lib/jobs/feed-jobs";
-import { subscribeFeed } from "@/lib/rss/ingest";
+import { enqueueChangedArticleEmbeddings } from "@/lib/jobs/feed-jobs";
+import { ingestFeed, subscribeFeed } from "@/lib/rss/ingest";
 import { SourceUriError } from "@/lib/rsshub/source-uri";
 
 const createFeedSchema = z.object({
   sourceUri: z.string().trim().min(1),
   title: z.string().trim().optional(),
   folder: z.string().trim().min(1).optional(),
+});
+
+const updateFeedSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  title: z.string().trim().min(1).optional(),
+  folder: z.string().trim().min(1).nullable().optional(),
+  fetchInterval: z.coerce.number().int().min(60).max(86_400).optional(),
 });
 
 export async function GET() {
@@ -20,6 +27,7 @@ export async function GET() {
       title: feeds.title,
       url: feeds.url,
       folder: subscriptions.folder,
+      fetchInterval: feeds.fetchInterval,
       lastFetchedAt: feeds.lastFetchedAt,
       lastSuccessfulFetchedAt: feeds.lastSuccessfulFetchedAt,
       lastError: feeds.lastError,
@@ -46,7 +54,8 @@ export async function POST(request: Request) {
 
   try {
     const feed = await subscribeFeed(parsed.data);
-    await enqueueFeedFetch(feed.id);
+    const result = await ingestFeed(feed.id);
+    const embeddingIndex = await enqueueChangedArticleEmbeddings(result);
 
     return NextResponse.json({
       feed: {
@@ -54,8 +63,10 @@ export async function POST(request: Request) {
         title: feed.title,
         url: feed.url,
         folder: parsed.data.folder,
-        unread: 0,
+        unread: result.insertedCount,
       },
+      ingest: result,
+      embeddingIndex,
     });
   } catch (error) {
     if (error instanceof SourceUriError) {
@@ -71,4 +82,51 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function PATCH(request: Request) {
+  const parsed = updateFeedSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "INVALID_INPUT", issues: parsed.error.issues },
+      { status: 400 },
+    );
+  }
+
+  const { id, title, folder, fetchInterval } = parsed.data;
+
+  await db.transaction(async (tx) => {
+    if (title !== undefined || fetchInterval !== undefined) {
+      await tx
+        .update(feeds)
+        .set({
+          ...(title !== undefined ? { title } : {}),
+          ...(fetchInterval !== undefined ? { fetchInterval } : {}),
+        })
+        .where(eq(feeds.id, id));
+    }
+
+    if (folder !== undefined) {
+      await tx
+        .insert(subscriptions)
+        .values({ feedId: id, folder })
+        .onConflictDoUpdate({
+          target: subscriptions.feedId,
+          set: { folder },
+        });
+    }
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = Number(searchParams.get("id"));
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ error: "INVALID_ID" }, { status: 400 });
+  }
+
+  await db.delete(feeds).where(eq(feeds.id, id));
+  return NextResponse.json({ ok: true });
 }
