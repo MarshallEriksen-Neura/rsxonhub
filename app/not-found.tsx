@@ -15,7 +15,6 @@ export default function NotFound() {
       description="你访问的页面不存在，或已经被移动。"
       actionText="返回首页"
       status="warning"
-      alertTitle="404"
       actionHref="/"
     />
   );

@@ -381,7 +381,7 @@
   }
 
   html {
-    @apply h-full font-sans;
+    @apply h-full w-full font-sans;
     background: var(--background);
     color-scheme: light;
     text-rendering: optimizeLegibility;

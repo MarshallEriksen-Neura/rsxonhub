@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   FileText,
   Plus,
@@ -15,17 +15,23 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, jsonSchema, type UIMessage } from "ai";
+import { DefaultChatTransport, jsonSchema } from "ai";
 
 import { Streamdown } from "streamdown";
 import "streamdown/styles.css";
 import { mermaid } from "@streamdown/mermaid";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/retroui/Button";
+import {
+  VirtualScroll,
+  useVirtualScroll,
+  type VirtualScrollItem,
+} from "@/components/feed/virtual-scroll";
 import type { CitedArticle } from "@/lib/ai/rag";
-import type { ChatMessageMetadata } from "@/app/api/chat/route";
-
-type ChatUIMessage = UIMessage<ChatMessageMetadata>;
+import type {
+  ChatUIMessage,
+  ConversationSummary,
+} from "@/lib/chat/types";
 
 /**
  * RAG 问答面板 — Manus 风格双栏布局
@@ -36,10 +42,13 @@ type ChatUIMessage = UIMessage<ChatMessageMetadata>;
 type ChatSession = {
   id: string;
   title: string;
-  messages: ChatUIMessage[];
   createdAt: Date;
   updatedAt: Date;
 };
+
+type HistoryListItem =
+  | { kind: "group"; id: string; label: string }
+  | { kind: "session"; id: string; session: ChatSession };
 
 const QUICK_ACTIONS = [
   { label: "分析订阅文章", icon: PenTool },
@@ -68,76 +77,130 @@ function groupByRecency(sessions: ChatSession[]) {
   return buckets.filter((b) => b.items.length > 0);
 }
 
-const INITIAL_SESSIONS: ChatSession[] = [];
+function toHistoryItems(sessions: ChatSession[]): VirtualScrollItem<HistoryListItem>[] {
+  return groupByRecency(sessions).flatMap((group) => [
+    {
+      id: `group-${group.key}`,
+      data: { kind: "group", id: group.key, label: group.label },
+    },
+    ...group.items.map((session) => ({
+      id: `session-${session.id}`,
+      data: { kind: "session" as const, id: session.id, session },
+    })),
+  ]);
+}
 
 export function ChatPanel() {
-  const [sessions, setSessions] = useState<ChatSession[]>(INITIAL_SESSIONS);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const {
+    items: conversationItems,
+    state: conversationState,
+    loadInitial: loadInitialConversations,
+    loadMore: loadMoreConversations,
+    retry: retryConversations,
+  } = useVirtualScroll<ChatSession>({ pageSize: 24 });
+
+  const fetchConversations = useCallback(
+    async (_page: number, size: number, cursor?: string | null) => {
+      const params = new URLSearchParams({ limit: String(size) });
+      if (cursor) params.set("cursor", cursor);
+      if (query.trim()) params.set("search", query.trim());
+
+      const response = await fetch(`/api/chat/conversations?${params}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as {
+        conversations?: ConversationSummary[];
+        pagination?: { hasMore?: boolean; nextCursor?: string | null };
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "聊天记录加载失败");
+      }
+
+      return {
+        data: (payload.conversations ?? []).map(toChatSession),
+        hasMore: Boolean(payload.pagination?.hasMore),
+        nextCursor: payload.pagination?.nextCursor ?? null,
+      };
+    },
+    [query],
+  );
+
+  useEffect(() => {
+    void loadInitialConversations(fetchConversations);
+  }, [fetchConversations, loadInitialConversations]);
+
+  const transport = useMemo(
+    () => new DefaultChatTransport<ChatUIMessage>({ api: "/api/chat" }),
+    [],
+  );
+
   const { messages, setMessages, sendMessage, status } = useChat<ChatUIMessage>({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport,
     messageMetadataSchema: jsonSchema({ type: "object" }),
+    onFinish: ({ message }) => {
+      const conversationId = message.metadata?.conversationId;
+      if (conversationId) {
+        setActiveSessionId(String(conversationId));
+      }
+      void loadInitialConversations(fetchConversations);
+    },
   });
 
   const isLoading = status === "streaming" || status === "submitted";
   const hasMessages = messages.length > 0;
 
-  const filtered =
-    query.trim() === ""
-      ? sessions
-      : sessions.filter((s) =>
-          s.title.toLowerCase().includes(query.trim().toLowerCase()),
-        );
-  const groups = groupByRecency(filtered);
+  const sessions = useMemo(
+    () => conversationItems.map((item) => item.data),
+    [conversationItems],
+  );
+  const historyItems = useMemo(() => toHistoryItems(sessions), [sessions]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  const flushToSession = useCallback(
-    (sessionId: string, currentMessages: ChatUIMessage[]) => {
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId
-            ? { ...s, messages: currentMessages, updatedAt: new Date() }
-            : s,
-        ),
-      );
-    },
-    [],
-  );
-
   const createNewSession = useCallback(() => {
-    if (activeSessionId) flushToSession(activeSessionId, messages);
     setMessages([]);
     setActiveSessionId(null);
     setInput("");
-  }, [activeSessionId, messages, flushToSession, setMessages]);
+  }, [setMessages]);
 
   const selectSession = useCallback(
-    (sessionId: string) => {
-      if (activeSessionId) flushToSession(activeSessionId, messages);
-      const target = sessions.find((s) => s.id === sessionId);
-      if (!target) return;
-      setMessages(target.messages);
+    async (sessionId: string) => {
+      const response = await fetch(`/api/chat/conversations/${sessionId}`);
+      if (!response.ok) return;
+      const data = (await response.json()) as { messages: ChatUIMessage[] };
+      setMessages(data.messages);
       setActiveSessionId(sessionId);
     },
-    [activeSessionId, messages, sessions, flushToSession, setMessages],
+    [setMessages],
   );
 
   const deleteSession = useCallback(
-    (sessionId: string, e: React.MouseEvent) => {
+    async (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      const response = await fetch(`/api/chat/conversations/${sessionId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) return;
+      void loadInitialConversations(fetchConversations);
       if (activeSessionId === sessionId) {
         setMessages([]);
         setActiveSessionId(null);
       }
     },
-    [activeSessionId, setMessages],
+    [
+      activeSessionId,
+      fetchConversations,
+      loadInitialConversations,
+      setMessages,
+    ],
   );
 
   const handleSubmit = useCallback(
@@ -146,35 +209,17 @@ export function ChatPanel() {
       const text = input.trim();
       if (!text || isLoading) return;
       setInput("");
-
-      if (!activeSessionId) {
-        const freshId = Date.now().toString();
-        setSessions((prev) => [
-          {
-            id: freshId,
-            title: text.slice(0, 24) + (text.length > 24 ? "…" : ""),
-            messages: [],
-            createdAt: new Date(),
-            updatedAt: new Date(),
+      await sendMessage(
+        { text },
+        {
+          body: {
+            conversationId: activeSessionId ? Number(activeSessionId) : undefined,
           },
-          ...prev,
-        ]);
-        setActiveSessionId(freshId);
-      }
-
-      await sendMessage({ text });
+        },
+      );
     },
     [input, isLoading, activeSessionId, sendMessage],
   );
-
-  useEffect(() => {
-    if (!activeSessionId || messages.length === 0) return;
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === activeSessionId ? { ...s, updatedAt: new Date() } : s,
-      ),
-    );
-  }, [messages.length, activeSessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -213,30 +258,36 @@ export function ChatPanel() {
           </label>
         </div>
 
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-2 pb-4">
-          {groups.length === 0 ? (
-            <SidebarEmpty hasQuery={query.trim() !== ""} />
-          ) : (
-            groups.map((group) => (
-              <div key={group.key} className="flex flex-col gap-0.5">
-                <span className="px-3 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-stone">
-                  {group.label}
-                </span>
-                <AnimatePresence initial={false}>
-                  {group.items.map((session) => (
-                    <SessionRow
-                      key={session.id}
-                      session={session}
-                      active={activeSessionId === session.id}
-                      onSelect={() => selectSession(session.id)}
-                      onDelete={(e) => deleteSession(session.id, e)}
-                    />
-                  ))}
-                </AnimatePresence>
-              </div>
-            ))
+        <VirtualScroll
+          items={historyItems}
+          height={0}
+          estimatedItemHeight={42}
+          state={conversationState}
+          onLoadMore={() => loadMoreConversations(fetchConversations)}
+          onRetry={() => retryConversations(fetchConversations)}
+          containerClassName="px-2 pb-4"
+          showLoadingMoreIndicator
+          loadingMoreText="加载聊天记录..."
+          emptyState={{
+            title: query.trim() ? "没有匹配的聊天记录" : "还没有聊天记录",
+            description: query.trim()
+              ? "换个关键词继续搜索"
+              : "发送第一条消息后会自动保存会话",
+          }}
+          errorState={{
+            title: "聊天记录加载失败",
+            description: "请稍后重试",
+            retryText: "重试",
+          }}
+          renderItem={(item) => (
+            <HistoryItemRow
+              item={item}
+              activeSessionId={activeSessionId}
+              onSelect={selectSession}
+              onDelete={deleteSession}
+            />
           )}
-        </div>
+        />
       </aside>
 
       {/* ── 右侧：对话区 / 欢迎页，输入框始终可见 ── */}
@@ -256,7 +307,7 @@ export function ChatPanel() {
                         exit={{ opacity: 0, y: -12 }}
                         transition={{ type: "spring", stiffness: 120, damping: 20 }}
                       >
-                        <MessageBubble message={message} />
+                        <MessageBubble message={message} isStreaming={isLoading} />
                       </motion.div>
                     ))}
                   </AnimatePresence>
@@ -355,19 +406,34 @@ function SessionRow({
   );
 }
 
-function SidebarEmpty({ hasQuery }: { hasQuery: boolean }) {
-  return (
-    <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-      <span className="inline-flex size-9 items-center justify-center rounded-lg bg-surface text-stone">
-        {hasQuery ? <Search size={16} aria-hidden /> : <MessageSquare size={16} aria-hidden />}
+function HistoryItemRow({
+  item,
+  activeSessionId,
+  onSelect,
+  onDelete,
+}: {
+  item: VirtualScrollItem<HistoryListItem>;
+  activeSessionId: string | null;
+  onSelect: (sessionId: string) => Promise<void>;
+  onDelete: (sessionId: string, e: React.MouseEvent) => Promise<void>;
+}) {
+  const data = item.data;
+
+  if (data.kind === "group") {
+    return (
+      <span className="block px-3 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-stone">
+        {data.label}
       </span>
-      <p className="text-body-sm text-steel">
-        {hasQuery ? "没有匹配的聊天记录" : "还没有聊天记录"}
-      </p>
-      {!hasQuery && (
-        <p className="text-caption text-stone">点击「新建聊天」开始第一段对话</p>
-      )}
-    </div>
+    );
+  }
+
+  return (
+    <SessionRow
+      session={data.session}
+      active={activeSessionId === data.session.id}
+      onSelect={() => void onSelect(data.session.id)}
+      onDelete={(event) => void onDelete(data.session.id, event)}
+    />
   );
 }
 
@@ -481,11 +547,15 @@ function messageText(message: ChatUIMessage): string {
     .join("");
 }
 
-function MessageBubble({ message }: { message: ChatUIMessage }) {
+function MessageBubble({
+  message,
+  isStreaming,
+}: {
+  message: ChatUIMessage;
+  isStreaming: boolean;
+}) {
   const text = messageText(message);
   const cited = message.metadata?.citedArticles;
-
-  const isStreaming = status === "streaming" || status === "submitted";
 
   if (message.role === "user") {
     return (
@@ -521,6 +591,15 @@ function MessageBubble({ message }: { message: ChatUIMessage }) {
       {cited && cited.length > 0 && <SourceCitations articles={cited} />}
     </div>
   );
+}
+
+function toChatSession(summary: ConversationSummary): ChatSession {
+  return {
+    id: String(summary.id),
+    title: summary.title,
+    createdAt: new Date(summary.createdAt),
+    updatedAt: new Date(summary.updatedAt),
+  };
 }
 
 function SourceCitations({ articles }: { articles: CitedArticle[] }) {

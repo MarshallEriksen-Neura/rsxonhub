@@ -13,8 +13,8 @@ import {
   MessageSquare,
   Search,
   Wifi,
-  WifiOff,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   fetchAIModels,
   saveAISettings,
@@ -103,7 +103,6 @@ export function AISection({
   const [isPending, startTransition] = useTransition();
   const [modelFetchKind, setModelFetchKind] = useState<"chat" | "embedding" | null>(null);
   const [testKind, setTestKind] = useState<"chat" | "embedding" | null>(null);
-  const [testResult, setTestResult] = useState<Record<"chat" | "embedding", { ok: boolean; message: string } | null>>({ chat: null, embedding: null });
   const [modelSearch, setModelSearch] = useState("");
   const [modelFilter, setModelFilter] = useState<"all" | "chat" | "embedding">("all");
   const [pendingRebuild, setPendingRebuild] = useState<{
@@ -191,9 +190,23 @@ export function AISection({
     const config = kind === "chat" ? chat : embedding;
     setTestKind(kind);
     startTransition(async () => {
-      const result = await testAIConnection({ kind, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model });
-      setTestKind(null);
-      setTestResult((prev) => ({ ...prev, [kind]: result }));
+      const toastId = toast.loading(
+        kind === "chat" ? "正在测试对话模型..." : "正在测试向量模型...",
+      );
+      try {
+        const result = await testAIConnection({ kind, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model });
+        if (result.ok) {
+          toast.success(result.message, { id: toastId });
+        } else {
+          toast.error(result.message, { id: toastId });
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "连接测试失败。", {
+          id: toastId,
+        });
+      } finally {
+        setTestKind(null);
+      }
     });
   };
 
@@ -395,7 +408,6 @@ export function AISection({
             <TestConnectionButton
               kind="chat"
               loading={testKind === "chat" && isPending}
-              result={testResult.chat}
               onClick={() => testConnection("chat")}
             />
           </RuntimePanel>
@@ -440,15 +452,10 @@ export function AISection({
             <TestConnectionButton
               kind="embedding"
               loading={testKind === "embedding" && isPending}
-              result={testResult.embedding}
               onClick={() => testConnection("embedding")}
             />
           </RuntimePanel>
 
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-micro text-steel">
-            <Lock size={12} aria-hidden />
-            <span>保存后配置进入后端 ai_configs 表；运行时只通过 lib/ai/index.ts 读取。</span>
-          </div>
         </div>
 
         <aside className="rounded-lg border border-hairline bg-background">
@@ -542,27 +549,19 @@ function RuntimePanel({
 function TestConnectionButton({
   kind,
   loading,
-  result,
   onClick,
 }: {
   kind: "chat" | "embedding";
   loading: boolean;
-  result: { ok: boolean; message: string } | null;
   onClick: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 rounded-md border border-hairline bg-surface px-4 py-3">
       <div>
         <div className="text-body-sm-medium text-ink">连接测试</div>
-        {result ? (
-          <div className={cn("mt-1 text-micro", result.ok ? "text-green-600" : "text-destructive")}>
-            {result.message}
-          </div>
-        ) : (
-          <div className="mt-1 text-micro text-steel">
-            {kind === "chat" ? "验证对话接口是否可用" : "验证向量接口是否可用"}
-          </div>
-        )}
+        <div className="mt-1 text-micro text-steel">
+          {kind === "chat" ? "验证对话接口是否可用" : "验证向量接口是否可用"}
+        </div>
       </div>
       <Button
         type="button"
@@ -574,10 +573,6 @@ function TestConnectionButton({
       >
         {loading ? (
           <Loader2 size={14} aria-hidden className="animate-spin" />
-        ) : result?.ok ? (
-          <Wifi size={14} aria-hidden className="text-green-600" />
-        ) : result ? (
-          <WifiOff size={14} aria-hidden className="text-destructive" />
         ) : (
           <Wifi size={14} aria-hidden />
         )}

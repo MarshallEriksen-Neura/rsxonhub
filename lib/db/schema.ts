@@ -185,6 +185,7 @@ export const conversations = pgTable("conversations", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   title: text("title"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // 消息(带引用回溯)
@@ -195,7 +196,9 @@ export const messages = pgTable("messages", {
     .references(() => conversations.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
   content: text("content").notNull(),
+  parts: jsonb("parts").$type<Record<string, unknown>[]>(),
   citedArticleIds: jsonb("cited_article_ids").$type<number[]>(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

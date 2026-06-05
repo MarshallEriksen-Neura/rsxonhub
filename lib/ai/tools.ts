@@ -11,6 +11,7 @@ import {
   digestItems,
 } from "@/lib/db/schema";
 import { retrieveArticleChunks } from "@/lib/ai/embedding-rebuild";
+import type { CitedArticle } from "@/lib/ai/rag";
 
 /**
  * 暴露给 LLM 的工具集。
@@ -35,13 +36,44 @@ const getArticleContentSchema = z.object({
   articleId: z.number().int().describe("文章 ID"),
 });
 
+type ChatToolEvent = {
+  tool: string;
+  input?: Record<string, unknown>;
+  resultCount?: number;
+};
+
+type CreateChatToolsOptions = {
+  onCitation?: (article: CitedArticle) => void;
+  onToolEvent?: (event: ChatToolEvent) => void;
+};
+
+function normalizeLimit(limit: number, max: number) {
+  return Math.min(Math.max(limit, 1), max);
+}
+
+function cite(options: CreateChatToolsOptions, article: CitedArticle) {
+  options.onCitation?.(article);
+}
+
 /** 语义检索：向量相似度召回文章 chunks，适合"找相关文章"类问题 */
-export const searchArticles = tool({
+export function createSearchArticlesTool(options: CreateChatToolsOptions = {}) {
+  return tool({
   description:
     "按语义相似度检索订阅内容，返回最相关的文章片段及来源。适合回答「有没有关于 X 的文章」类问题。",
   inputSchema: zodSchema(searchArticlesSchema),
   execute: async ({ query, limit }) => {
-    const chunks = await retrieveArticleChunks(query, limit);
+    const normalizedQuery = query.trim();
+    const safeLimit = normalizeLimit(limit, 12);
+    options.onToolEvent?.({
+      tool: "searchArticles",
+      input: { query: normalizedQuery, limit: safeLimit },
+    });
+
+    if (!normalizedQuery) {
+      return { results: [], warning: "搜索文本为空，未执行向量检索。" };
+    }
+
+    const chunks = await retrieveArticleChunks(normalizedQuery, safeLimit);
     if (chunks.length === 0) return { results: [] };
 
     const articleIds = [...new Set(chunks.map((c) => c.articleId))];
@@ -59,30 +91,48 @@ export const searchArticles = tool({
 
     const metaMap = new Map(metas.map((m) => [m.id, m]));
 
+    const results = chunks.map((c) => {
+      const meta = metaMap.get(c.articleId);
+      if (meta) cite(options, { id: meta.id, title: meta.title, url: meta.url });
+      return {
+        articleId: c.articleId,
+        title: meta?.title ?? null,
+        url: meta?.url ?? null,
+        feedTitle: meta?.feedTitle ?? null,
+        publishedAt: meta?.publishedAt?.toISOString() ?? null,
+        excerpt: c.content.slice(0, 1200),
+        distance: c.distance,
+      };
+    });
+
+    options.onToolEvent?.({ tool: "searchArticles", resultCount: results.length });
+
     return {
-      results: chunks.map((c) => {
-        const meta = metaMap.get(c.articleId);
-        return {
-          articleId: c.articleId,
-          title: meta?.title ?? null,
-          url: meta?.url ?? null,
-          feedTitle: meta?.feedTitle ?? null,
-          publishedAt: meta?.publishedAt?.toISOString() ?? null,
-          excerpt: c.content,
-          distance: c.distance,
-        };
-      }),
+      results,
     };
   },
 });
+}
 
 /** 关键词检索：按标题/摘要全文搜索，适合精确词搜索 */
-export const findArticlesByKeyword = tool({
+export function createFindArticlesByKeywordTool(options: CreateChatToolsOptions = {}) {
+  return tool({
   description:
     "按关键词搜索文章标题和摘要，返回最近匹配的文章列表（不做语义理解，适合搜索具体词语）。",
   inputSchema: zodSchema(findByKeywordSchema),
   execute: async ({ keyword, limit }) => {
-    const pattern = `%${keyword}%`;
+    const normalizedKeyword = keyword.trim();
+    const safeLimit = normalizeLimit(limit, 20);
+    options.onToolEvent?.({
+      tool: "findArticlesByKeyword",
+      input: { keyword: normalizedKeyword, limit: safeLimit },
+    });
+
+    if (!normalizedKeyword) {
+      return { articles: [], warning: "关键词为空，未执行数据库搜索。" };
+    }
+
+    const pattern = `%${normalizedKeyword}%`;
     const rows = await db
       .select({
         id: articles.id,
@@ -99,14 +149,30 @@ export const findArticlesByKeyword = tool({
       .leftJoin(articleSummaries, eq(articleSummaries.articleId, articles.id))
       .where(or(ilike(articles.title, pattern), ilike(articleSummaries.summary, pattern)))
       .orderBy(desc(articles.publishedAt))
-      .limit(limit);
+      .limit(safeLimit);
 
-    return { articles: rows.map((r) => ({ ...r, publishedAt: r.publishedAt?.toISOString() ?? null })) };
+    for (const row of rows) {
+      cite(options, { id: row.id, title: row.title, url: row.url });
+    }
+    options.onToolEvent?.({
+      tool: "findArticlesByKeyword",
+      resultCount: rows.length,
+    });
+
+    return {
+      articles: rows.map((r) => ({
+        ...r,
+        summary: r.summary ? r.summary.slice(0, 1200) : null,
+        publishedAt: r.publishedAt?.toISOString() ?? null,
+      })),
+    };
   },
 });
+}
 
 /** 获取文章全文：仅在需要深读时调用 */
-export const getArticleContent = tool({
+export function createGetArticleContentTool(options: CreateChatToolsOptions = {}) {
+  return tool({
   description:
     "获取指定文章的完整正文。只在需要引用或分析具体内容时调用，一次最多取 1 篇。",
   inputSchema: zodSchema(getArticleContentSchema),
@@ -130,6 +196,8 @@ export const getArticleContent = tool({
       .limit(1);
 
     if (!row) return { error: `文章 ${articleId} 不存在` };
+    cite(options, { id: row.id, title: row.title, url: row.url });
+    options.onToolEvent?.({ tool: "getArticleContent", resultCount: 1 });
 
     return {
       ...row,
@@ -138,9 +206,11 @@ export const getArticleContent = tool({
     };
   },
 });
+}
 
 /** 列出订阅源 */
-export const listFeeds = tool({
+export function createListFeedsTool(options: CreateChatToolsOptions = {}) {
+  return tool({
   description: "列出所有订阅源，用于回答「我订阅了哪些」类问题。",
   inputSchema: zodSchema(z.object({})),
   execute: async () => {
@@ -154,12 +224,15 @@ export const listFeeds = tool({
       .from(feeds)
       .leftJoin(subscriptions, eq(subscriptions.feedId, feeds.id))
       .orderBy(subscriptions.folder, feeds.title);
+    options.onToolEvent?.({ tool: "listFeeds", resultCount: rows.length });
     return { feeds: rows };
   },
 });
+}
 
 /** 取最近一份 digest */
-export const getLatestDigest = tool({
+export function createGetLatestDigestTool(options: CreateChatToolsOptions = {}) {
+  return tool({
   description: "获取最新一份每日精选摘要（digest），用于回答「今天有什么重要内容」类问题。",
   inputSchema: zodSchema(z.object({})),
   execute: async () => {
@@ -182,18 +255,37 @@ export const getLatestDigest = tool({
       .innerJoin(articles, eq(articles.id, digestItems.articleId))
       .where(eq(digestItems.digestId, digest.id))
       .orderBy(digestItems.position);
+    for (const item of items) {
+      cite(options, {
+        id: item.articleId,
+        title: item.articleTitle,
+        url: item.articleUrl,
+      });
+    }
+    options.onToolEvent?.({ tool: "getLatestDigest", resultCount: items.length });
 
     return {
       digest: { date: digest.digestDate, title: digest.title, summary: digest.summary, items },
     };
   },
 });
+}
 
 /** 全部工具集合，传给 streamText({ tools }) */
+export function createChatTools(options: CreateChatToolsOptions = {}) {
+  return {
+    searchArticles: createSearchArticlesTool(options),
+    findArticlesByKeyword: createFindArticlesByKeywordTool(options),
+    getArticleContent: createGetArticleContentTool(options),
+    listFeeds: createListFeedsTool(options),
+    getLatestDigest: createGetLatestDigestTool(options),
+  } as const;
+}
+
 export const chatTools = {
-  searchArticles,
-  findArticlesByKeyword,
-  getArticleContent,
-  listFeeds,
-  getLatestDigest,
+  searchArticles: createSearchArticlesTool(),
+  findArticlesByKeyword: createFindArticlesByKeywordTool(),
+  getArticleContent: createGetArticleContentTool(),
+  listFeeds: createListFeedsTool(),
+  getLatestDigest: createGetLatestDigestTool(),
 } as const;

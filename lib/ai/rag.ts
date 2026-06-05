@@ -23,7 +23,15 @@ export async function retrieveContext(
   query: string,
   limit = 8,
 ): Promise<RetrievedContext> {
-  const chunks = await retrieveArticleChunks(query, limit);
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return {
+      systemPrompt: buildRagSystemPrompt({ chunks: [] }),
+      citedArticles: [],
+    };
+  }
+
+  const chunks = await retrieveArticleChunks(normalizedQuery, limit);
 
   if (chunks.length === 0) {
     return {

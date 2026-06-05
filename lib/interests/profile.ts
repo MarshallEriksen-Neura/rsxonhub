@@ -1,7 +1,9 @@
 import { embed } from "ai";
 import { desc, eq, sql } from "drizzle-orm";
-import { embeddingModel, nvidiaEmbedOptions, withAIRequestRetry } from "@/lib/ai";
-import { getEmbeddingConfig } from "@/lib/ai/config";
+import {
+  embeddingModelWithConfig,
+  withAIRequestRetry,
+} from "@/lib/ai";
 import { db } from "@/lib/db";
 import { interestProfiles, usageLogs } from "@/lib/db/schema";
 import { stableHash } from "@/lib/rss/hash";
@@ -96,12 +98,11 @@ export function tokenizeInterest(content: string) {
 }
 
 async function embedInterestProfile(content: string) {
-  const [model, config] = await Promise.all([embeddingModel(), getEmbeddingConfig()]);
+  const { config, model } = await embeddingModelWithConfig("query");
   const result = await withAIRequestRetry(() =>
     embed({
       model,
       value: content,
-      providerOptions: nvidiaEmbedOptions("query"),
     }),
   );
 

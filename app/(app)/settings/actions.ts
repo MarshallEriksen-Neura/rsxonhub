@@ -6,6 +6,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { aiRequestFetch, createAIRequestFetch } from "@/lib/ai";
 import {
   getAIConfig,
   getChatConfig,
@@ -155,19 +156,29 @@ export async function testAIConnection(
       return { ok: false, message: "API Key 未配置。" };
     }
 
-    const provider = createOpenAI({ baseURL: parsed.baseUrl, apiKey });
+    const provider = createOpenAI({
+      baseURL: parsed.baseUrl,
+      apiKey,
+      fetch:
+        parsed.kind === "embedding"
+          ? createAIRequestFetch({ nvidiaEmbeddingInputType: "query" })
+          : aiRequestFetch,
+    });
 
     if (parsed.kind === "chat") {
       const { generateText } = await import("ai");
       await generateText({
         model: provider(parsed.model),
-        prompt: "hi",
-        maxOutputTokens: 1,
+        prompt: "Reply with exactly: pong",
+        maxOutputTokens: 64,
       });
       return { ok: true, message: "对话模型连接成功。" };
     } else {
       const { embed } = await import("ai");
-      await embed({ model: provider.embedding(parsed.model), value: "test" });
+      await embed({
+        model: provider.embedding(parsed.model),
+        value: "test",
+      });
       return { ok: true, message: "向量模型连接成功。" };
     }
   } catch (error) {
@@ -228,7 +239,7 @@ export async function fetchAIModels(
       };
     }
 
-    const response = await fetch(modelsUrl(parsed.baseUrl), {
+    const response = await aiRequestFetch(modelsUrl(parsed.baseUrl), {
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },

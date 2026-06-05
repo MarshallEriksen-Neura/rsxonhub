@@ -1,6 +1,9 @@
 import { embed, embedMany } from "ai";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { embeddingModel, nvidiaEmbedOptions, withAIRequestRetry } from "@/lib/ai";
+import {
+  embeddingModelWithConfig,
+  withAIRequestRetry,
+} from "@/lib/ai";
 import { getEmbeddingConfig } from "@/lib/ai/config";
 import { chunkArticleText, expectedEmbeddingDimension } from "@/lib/ai/embedding-text";
 import { db } from "@/lib/db";
@@ -22,12 +25,11 @@ export type EmbeddingChangeCheck = {
 };
 
 export async function probeEmbeddingDimension() {
-  const model = await embeddingModel();
+  const { model } = await embeddingModelWithConfig("query");
   const result = await withAIRequestRetry(() =>
     embed({
       model,
       value: "dimension probe",
-      providerOptions: nvidiaEmbedOptions("query"),
     }),
   );
 
@@ -136,12 +138,11 @@ export async function embedSingleArticle(articleId: number) {
 }
 
 export async function retrieveArticleChunks(query: string, limit = 8) {
-  const model = await embeddingModel();
+  const { model } = await embeddingModelWithConfig("query");
   const result = await withAIRequestRetry(() =>
     embed({
       model,
       value: query,
-      providerOptions: nvidiaEmbedOptions("query"),
     }),
   );
 
@@ -165,7 +166,7 @@ async function embedArticle(articleId: number, text: string, title?: string) {
     return { articleId, chunkCount: 0 };
   }
 
-  const model = await embeddingModel();
+  const { config, model } = await embeddingModelWithConfig("passage");
   let tokenCount = 0;
 
   for (let start = 0; start < chunks.length; start += EMBED_BATCH_SIZE) {
@@ -175,7 +176,6 @@ async function embedArticle(articleId: number, text: string, title?: string) {
         model,
         values,
         maxParallelCalls: 2,
-        providerOptions: nvidiaEmbedOptions("passage"),
       }),
     );
     tokenCount += result.usage?.tokens ?? 0;
@@ -206,7 +206,6 @@ async function embedArticle(articleId: number, text: string, title?: string) {
     .delete(articleChunks)
     .where(and(eq(articleChunks.articleId, articleId), gt(articleChunks.chunkIndex, chunks.length - 1)));
 
-  const config = await getEmbeddingConfig();
   await db.insert(usageLogs).values({
     kind: "embedding",
     model: config.model,
@@ -239,4 +238,3 @@ function buildArticleEmbeddingText(article: {
 
 
 export { chunkArticleText, expectedEmbeddingDimension };
-

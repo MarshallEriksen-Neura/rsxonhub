@@ -14,6 +14,9 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://rsxonhub:${DB_PASSWORD}@db:5432/rsxonhub
       - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - RSS_FETCH_PROXY=${RSS_FETCH_PROXY:-}
+      - AI_PROXY_URL=${AI_PROXY_URL:-}
+      - AI_REQUEST_TIMEOUT_MS=${AI_REQUEST_TIMEOUT_MS:-60000}
       - DIGEST_TIMEZONE=${DIGEST_TIMEZONE:-Asia/Shanghai}
       - DIGEST_GENERATE_AT=${DIGEST_GENERATE_AT:-08:00}
       - DIGEST_PREPARE_AT=${DIGEST_PREPARE_AT:-07:30}
@@ -33,6 +36,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # RSSHub
+  rsshub:
+    image: diygod/rsshub
+    container_name: rsxonhub-rsshub
+    restart: unless-stopped
+    networks:
+      - rsxonhub-network
 
   # PostgreSQL 数据库
   db:
@@ -67,6 +78,9 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://rsxonhub:${DB_PASSWORD}@db:5432/rsxonhub
       - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - RSS_FETCH_PROXY=${RSS_FETCH_PROXY:-}
+      - AI_PROXY_URL=${AI_PROXY_URL:-}
+      - AI_REQUEST_TIMEOUT_MS=${AI_REQUEST_TIMEOUT_MS:-60000}
       - DIGEST_TIMEZONE=${DIGEST_TIMEZONE:-Asia/Shanghai}
       - DIGEST_GENERATE_AT=${DIGEST_GENERATE_AT:-08:00}
       - DIGEST_PREPARE_AT=${DIGEST_PREPARE_AT:-07:30}

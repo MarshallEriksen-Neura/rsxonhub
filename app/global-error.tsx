@@ -4,7 +4,7 @@ import "./globals.css";
 import { useEffect } from "react";
 import { FullPageError } from "@/components/error-management/full-page-error";
 import { ThemeProvider } from "@/components/theme-provider";
-import { TriangleAlert, WifiOff, ServerCrash, FileX } from "lucide-react";
+import { TriangleAlert, WifiOff, ServerCrash } from "lucide-react";
 
 interface GlobalErrorProps {
   error: Error & { digest?: string };
@@ -22,16 +22,6 @@ const getErrorConfig = (error: Error) => {
       description: "请检查您的网络连接后重试",
       actionText: "重试连接",
       status: "error" as const,
-    };
-  }
-
-  if (message.includes("404") || message.includes("not found")) {
-    return {
-      icon: <FileX className="w-16 h-16 text-yellow-600" />,
-      title: "页面未找到",
-      description: "您访问的页面可能已被移除或不存在",
-      actionText: "返回首页",
-      status: "warning" as const,
     };
   }
 
@@ -67,27 +57,22 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="zh-CN" suppressHydrationWarning className="h-full antialiased">
+    <html lang="zh-CN" suppressHydrationWarning className="h-full w-full antialiased">
       <head>
         <title>系统异常 | rsxonhub</title>
       </head>
-      <body className="min-h-full bg-background text-foreground">
+      <body className="min-h-full w-full">
         <ThemeProvider>
           <FullPageError
             icon={config.icon}
             title={config.title}
-            description={
-              error.digest
-                ? "请求处理失败，请稍后重试。"
-                : config.description
-            }
+            description={error.digest ? "请求处理失败，请稍后重试。" : config.description}
             actionText={config.actionText}
             status={config.status}
             alertTitle="系统异常"
             digest={error.digest}
             details={error.message}
-            actionHref={config.actionText === "返回首页" ? "/" : undefined}
-            onAction={config.actionText === "返回首页" ? undefined : retry}
+            onAction={retry}
           />
         </ThemeProvider>
       </body>
