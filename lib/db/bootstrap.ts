@@ -99,17 +99,17 @@ async function initAIConfigs() {
       
       // 插入迁移记录（标记所有迁移为已完成）
       const migrations = [
-        { id: 1, hash: "0000_mighty_black_panther" },
-        { id: 2, hash: "0001_youthful_pyro" },
-        { id: 3, hash: "0002_lying_naoko" },
-        { id: 4, hash: "0003_repair_feed_fetch_runs" },
-        { id: 5, hash: "0004_careful_swarm" },
+        { hash: "0000_mighty_black_panther", createdAt: 1780561893632 },
+        { hash: "0001_youthful_pyro", createdAt: 1780566917684 },
+        { hash: "0002_lying_naoko", createdAt: 1780571426691 },
+        { hash: "0003_repair_feed_fetch_runs", createdAt: 1780576504234 },
+        { hash: "0004_careful_swarm", createdAt: 1780581923526 },
       ];
 
       for (const migration of migrations) {
         await db.execute(
-          sql`INSERT INTO drizzle.__drizzle_migrations (id, hash, created_at) 
-              VALUES (${migration.id}, ${migration.hash}, EXTRACT(EPOCH FROM NOW()) * 1000)
+          sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+              VALUES (${migration.hash}, ${migration.createdAt})
               ON CONFLICT DO NOTHING`,
         );
       }

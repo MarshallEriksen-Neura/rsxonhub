@@ -7,6 +7,7 @@ import { Input } from "@/components/retroui/Input";
 import { Button } from "@/components/retroui/Button";
 import { cn } from "@/lib/utils";
 import { useFeedStore } from "@/lib/stores/feed";
+import { toast } from "sonner";
 
 /**
  * 添加订阅源对话框。
@@ -42,10 +43,8 @@ export function AddFeedDialog({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<FeedPreview | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const resolvedFolder = creatingFolder ? newFolder.trim() : folder;
   const urlValid = isSupportedSourceUri(url);
@@ -61,10 +60,8 @@ export function AddFeedDialog({
     setCreatingFolder(false);
     setTouched(false);
     setSubmitting(false);
-    setSubmitError(null);
     setPreviewing(false);
     setPreview(null);
-    setPreviewError(null);
   }
 
   function handleOpenChange(next: boolean) {
@@ -75,7 +72,6 @@ export function AddFeedDialog({
   async function handlePreview() {
     setTouched(true);
     setPreview(null);
-    setPreviewError(null);
     if (!urlValid) return;
 
     setPreviewing(true);
@@ -94,7 +90,7 @@ export function AddFeedDialog({
         setTitle(payload.feed.title);
       }
     } catch (error) {
-      setPreviewError(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : "预览订阅源失败");
     } finally {
       setPreviewing(false);
     }
@@ -104,7 +100,6 @@ export function AddFeedDialog({
     setTouched(true);
     if (!canSubmit) return;
     setSubmitting(true);
-    setSubmitError(null);
 
     try {
       const response = await fetch("/api/feeds", {
@@ -132,9 +127,10 @@ export function AddFeedDialog({
       });
       selectFeed(feed.id);
       onCreated?.();
+      toast.success("订阅源已添加");
       handleOpenChange(false);
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : "添加订阅源失败");
     } finally {
       setSubmitting(false);
     }
@@ -168,7 +164,6 @@ export function AddFeedDialog({
               onChange={(e) => {
                 setUrl(e.target.value);
                 setPreview(null);
-                setPreviewError(null);
               }}
               aria-invalid={urlError || undefined}
             />
@@ -201,10 +196,6 @@ export function AddFeedDialog({
                 <div className="mt-1 truncate text-micro text-steel">{preview.feed.siteUrl}</div>
               ) : null}
             </div>
-          ) : null}
-
-          {previewError || submitError ? (
-            <p className="text-body-sm text-destructive">{previewError ?? submitError}</p>
           ) : null}
 
           {/* 名称(可选) */}

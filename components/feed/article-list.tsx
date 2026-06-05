@@ -9,6 +9,7 @@ import { Input } from "@/components/retroui/Input";
 import { Button } from "@/components/retroui/Button";
 import { VirtualScroll, useVirtualScroll } from "./virtual-scroll";
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 // 重要性徽章变体配置
 const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
@@ -43,7 +44,6 @@ export function ArticleList() {
   const selectArticle = useFeedStore((s) => s.selectArticle);
   const setFeeds = useFeedStore((s) => s.setFeeds);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // 使用虚拟滚动 Hook
   const {
@@ -103,7 +103,6 @@ export function ArticleList() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    setRefreshError(null);
     try {
       const response = await fetch("/api/feeds/refresh", {
         method: "POST",
@@ -116,8 +115,9 @@ export function ArticleList() {
       }
       await refreshFeedsSnapshot();
       await loadInitial(fetchArticles);
+      toast.success("订阅源刷新完成");
     } catch (error) {
-      setRefreshError(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : "刷新订阅源失败");
     } finally {
       setRefreshing(false);
     }
@@ -162,9 +162,6 @@ export function ArticleList() {
             />
           </Button>
         </div>
-        {refreshError ? (
-          <p className="text-micro text-destructive">{refreshError}</p>
-        ) : null}
       </div>
 
       {/* 虚拟滚动文章列表 */}

@@ -142,6 +142,7 @@ export function VirtualScroll<T = unknown>({
   } = state;
 
   const parentRef = React.useRef<HTMLDivElement>(null);
+  const loadRequestedRef = React.useRef(false);
 
   // TanStack Virtual returns imperative helpers that React Compiler cannot memoize safely.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -152,29 +153,37 @@ export function VirtualScroll<T = unknown>({
     overscan: 5, // 预渲染前后各5个项目
   });
 
-  // 监听滚动到底部，触发加载更多
-  React.useEffect(() => {
+  const maybeLoadMore = React.useCallback(() => {
     if (!onLoadMore || !hasMore || isLoadingMore || isLoading) return;
+    if (loadRequestedRef.current) return;
 
-    const [lastItem] = [...virtualizer.getVirtualItems()].reverse();
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
 
-    if (!lastItem) return;
+    const distanceToBottom =
+      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
 
-    const shouldLoadMore =
-      lastItem.index >= items.length - 1 &&
-      lastItem.end < (parentRef.current?.scrollHeight ?? 0) + loadMoreThreshold;
-
-    if (shouldLoadMore) {
+    if (distanceToBottom <= loadMoreThreshold) {
+      loadRequestedRef.current = true;
       onLoadMore();
     }
+  }, [hasMore, isLoading, isLoadingMore, loadMoreThreshold, onLoadMore]);
+
+  React.useEffect(() => {
+    if (!isLoadingMore) {
+      loadRequestedRef.current = false;
+    }
+  }, [isLoadingMore]);
+
+  // 监听滚动到底部，触发加载更多；也覆盖首屏未填满容器时的自动补页。
+  React.useEffect(() => {
+    maybeLoadMore();
   }, [
     items.length,
     hasMore,
     isLoadingMore,
     isLoading,
-    onLoadMore,
-    loadMoreThreshold,
-    virtualizer,
+    maybeLoadMore,
   ]);
 
   // ── 空状态 ──
@@ -258,8 +267,9 @@ export function VirtualScroll<T = unknown>({
   return (
     <div
       ref={parentRef}
+      onScroll={maybeLoadMore}
       className={cn(
-        "w-full overflow-auto",
+        height > 0 ? "w-full overflow-auto" : "min-h-0 w-full flex-1 overflow-auto",
         containerClassName,
       )}
       style={{ height: height > 0 ? height : undefined }}
@@ -301,13 +311,10 @@ export function VirtualScroll<T = unknown>({
               <Loader size="sm" />
               <span>{loadingMoreText}</span>
             </div>
-          ) : hasMore && onLoadMore ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onLoadMore}
-              render={<span>加载更多</span>}
-            />
+          ) : hasMore ? (
+            <span className="text-body-sm text-muted-foreground">
+              继续向下滚动加载
+            </span>
           ) : null}
         </div>
       )}

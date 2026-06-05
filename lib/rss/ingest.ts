@@ -7,6 +7,7 @@ import {
   readStates,
   subscriptions,
 } from "@/lib/db/schema";
+import { GENERIC_FEED_ERROR_MESSAGE, logAppError } from "@/lib/errors/app-error-log";
 import { parseFeedUrl } from "@/lib/rss/parser";
 import { normalizeFeed, normalizeItems, type NormalizedArticle } from "@/lib/rss/normalize";
 import { resolveFeedSource } from "@/lib/rsshub/source-uri";
@@ -109,12 +110,23 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
       ...result,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    await logAppError({
+      source: "rss",
+      operation: "ingestFeed",
+      error,
+      feedId,
+      feedFetchRunId: run.id,
+      details: {
+        feedUrl: feed.url,
+        fetchUrl: source.fetchUrl,
+      },
+    });
+
     await db
       .update(feeds)
       .set({
         lastFetchedAt: sql`now()`,
-        lastError: message,
+        lastError: GENERIC_FEED_ERROR_MESSAGE,
       })
       .where(eq(feeds.id, feedId));
 
@@ -123,7 +135,7 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
       .set({
         status: "failed",
         finishedAt: sql`now()`,
-        error: message,
+        error: GENERIC_FEED_ERROR_MESSAGE,
       })
       .where(eq(feedFetchRuns.id, run.id));
 

@@ -62,7 +62,7 @@ export function FullPageError({
             {(digest || details) && (
               <Alert.Description className="space-y-2 break-words text-current/80">
                 {digest && (
-                  <p className="font-mono text-xs leading-relaxed">
+                  <p className="break-all font-mono text-xs leading-relaxed">
                     错误 ID: {digest}
                   </p>
                 )}

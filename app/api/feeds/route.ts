@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { articles, feeds, readStates, subscriptions } from "@/lib/db/schema";
+import { logAppError, publicFeedErrorResponse } from "@/lib/errors/app-error-log";
 import { enqueueChangedArticleEmbeddings } from "@/lib/jobs/feed-jobs";
 import { ingestFeed, subscribeFeed } from "@/lib/rss/ingest";
 import { SourceUriError } from "@/lib/rsshub/source-uri";
@@ -76,11 +77,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json(
-      { error: "CREATE_FEED_FAILED", message },
-      { status: 500 },
-    );
+    await logAppError({
+      source: "api",
+      operation: "feeds.POST",
+      error,
+      details: {
+        sourceUri: parsed.data.sourceUri,
+        title: parsed.data.title,
+        folder: parsed.data.folder,
+      },
+    });
+    return publicFeedErrorResponse("CREATE_FEED_FAILED", 500);
   }
 }
 

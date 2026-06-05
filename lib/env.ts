@@ -23,6 +23,7 @@ const urlString = () =>
 const schema = z.object({
   DATABASE_URL: urlString(),
   RSSHUB_BASE_URL: urlString().default("https://rsshub.app"),
+  RSS_FETCH_PROXY: optionalString(),
 
   // 登录(Auth.js Credentials)
   AUTH_SECRET: optionalString(),

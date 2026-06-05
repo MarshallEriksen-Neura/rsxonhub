@@ -209,6 +209,33 @@ export const usageLogs = pgTable("usage_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 服务端错误日志。面向前端只返回通用错误,详细上游响应和堆栈保存在这里。
+export const appErrorLogs = pgTable(
+  "app_error_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    source: text("source").notNull(),
+    operation: text("operation").notNull(),
+    severity: text("severity", { enum: ["info", "warning", "error"] })
+      .default("error")
+      .notNull(),
+    message: text("message").notNull(),
+    errorName: text("error_name"),
+    stack: text("stack"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    feedId: integer("feed_id").references(() => feeds.id, { onDelete: "set null" }),
+    feedFetchRunId: integer("feed_fetch_run_id").references(() => feedFetchRuns.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("app_error_logs_created_idx").on(t.createdAt),
+    index("app_error_logs_source_operation_idx").on(t.source, t.operation),
+    index("app_error_logs_feed_idx").on(t.feedId),
+  ],
+);
+
 export const interestProfiles = pgTable(
   "interest_profiles",
   {
@@ -345,6 +372,7 @@ export const schema = {
   conversations,
   messages,
   usageLogs,
+  appErrorLogs,
   interestProfiles,
   articleRelevanceScores,
   digestCandidates,

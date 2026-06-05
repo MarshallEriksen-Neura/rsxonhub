@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { feeds } from "@/lib/db/schema";
+import { logAppError, publicFeedErrorResponse } from "@/lib/errors/app-error-log";
 import { enqueueChangedArticleEmbeddings } from "@/lib/jobs/feed-jobs";
 import { ingestFeed } from "@/lib/rss/ingest";
 
@@ -25,11 +26,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ results });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json(
-      { error: "REFRESH_FEED_FAILED", message },
-      { status: 500 },
-    );
+    await logAppError({
+      source: "api",
+      operation: "feeds.refresh.POST",
+      error,
+      feedId: parsed.data.feedId,
+    });
+    return publicFeedErrorResponse("REFRESH_FEED_FAILED", 500);
   }
 }
 

@@ -50,18 +50,25 @@ export const Button = ({
   ref,
   ...props
 }: IButtonProps & { ref?: React.Ref<HTMLElement> }) => {
+  const isFragmentRender =
+    React.isValidElement(render) && render.type === React.Fragment;
+  const resolvedRender = isFragmentRender ? undefined : render;
+  const resolvedChildren = isFragmentRender
+    ? (render as React.ReactElement<{ children?: React.ReactNode }>).props
+        .children
+    : children;
   const resolvedNativeButton =
-    nativeButton ?? (render ? isNativeButtonRender(render) : undefined);
+    nativeButton ?? (resolvedRender ? isNativeButtonRender(resolvedRender) : undefined);
 
   return (
     <BaseButton
       ref={ref}
       className={cn(buttonVariants({ variant, size }), className)}
-      render={render}
+      render={resolvedRender}
       nativeButton={resolvedNativeButton}
       {...props}
     >
-      {children}
+      {resolvedChildren}
     </BaseButton>
   );
 };

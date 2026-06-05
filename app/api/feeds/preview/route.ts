@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { logAppError, publicFeedErrorResponse } from "@/lib/errors/app-error-log";
 import { parseFeedUrl } from "@/lib/rss/parser";
 import { normalizeFeed } from "@/lib/rss/normalize";
 import { resolveFeedSource, SourceUriError } from "@/lib/rsshub/source-uri";
@@ -43,12 +44,14 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      {
-        error: "PREVIEW_FEED_FAILED",
-        message: error instanceof Error ? error.message : "预览订阅源失败",
+    await logAppError({
+      source: "api",
+      operation: "feeds.preview.POST",
+      error,
+      details: {
+        sourceUri: parsed.data.sourceUri,
       },
-      { status: 502 },
-    );
+    });
+    return publicFeedErrorResponse("PREVIEW_FEED_FAILED", 502);
   }
 }

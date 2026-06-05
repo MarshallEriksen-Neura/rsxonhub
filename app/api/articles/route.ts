@@ -1,5 +1,6 @@
 import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { encodeArticleCursor, parseArticleCursor } from "@/lib/articles/cursor";
 import { db } from "@/lib/db";
 import {
   articleSummaries,
@@ -7,6 +8,7 @@ import {
   feeds,
   readStates,
 } from "@/lib/db/schema";
+import { toIsoString } from "@/lib/datetime";
 import { sanitizeArticleHtml } from "@/lib/rss/sanitize";
 
 export async function GET(request: Request) {
@@ -17,7 +19,7 @@ export async function GET(request: Request) {
   const search = searchParams.get("search")?.trim();
   const limit = clamp(numberParam(searchParams.get("limit")) ?? 20, 1, 100);
   const queryLimit = articleId ? 1 : limit + 1;
-  const cursor = parseCursor(searchParams.get("cursor"));
+  const cursor = parseArticleCursor(searchParams.get("cursor"));
 
   const conditions = [];
 
@@ -46,12 +48,12 @@ export async function GET(request: Request) {
     );
   }
 
-  const sortAt = sql<Date>`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`;
+  const sortAt = sql<string>`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`;
   if (cursor && !articleId) {
     conditions.push(
       or(
-        lt(sortAt, new Date(cursor.sortAt)),
-        and(eq(sortAt, new Date(cursor.sortAt)), lt(articles.id, cursor.id)),
+        lt(sortAt, cursor.sortAt),
+        and(eq(sortAt, cursor.sortAt), lt(articles.id, cursor.id)),
       ),
     );
   }
@@ -87,19 +89,20 @@ export async function GET(request: Request) {
   const pageRows = articleId ? rows : rows.slice(0, limit);
   const hasMore = !articleId && rows.length > limit;
   const lastRow = pageRows.at(-1);
+  const lastSortAt = toIsoString(lastRow?.sortAt);
   const nextCursor =
-    hasMore && lastRow
-      ? encodeCursor({ sortAt: lastRow.sortAt.toISOString(), id: lastRow.id })
+    hasMore && lastRow && lastSortAt
+      ? encodeArticleCursor({ sortAt: lastSortAt, id: lastRow.id })
       : null;
 
   return NextResponse.json({
     articles: pageRows.map((row) => ({
       ...row,
       feedTitle: row.feedTitle ?? "未命名订阅源",
-      publishedAt: (row.publishedAt ?? row.fetchedAt)?.toISOString() ?? null,
-      fetchedAt: row.fetchedAt.toISOString(),
+      publishedAt: toIsoString(row.publishedAt ?? row.fetchedAt),
+      fetchedAt: toIsoString(row.fetchedAt),
       status: row.status ?? "unread",
-      summary: row.aiSummary ?? row.summaryRaw ?? "",
+      summary: row.aiSummary ?? "",
       bullets: row.bullets ?? [],
       tags: row.tags ?? [],
       importance: importanceLevel(row.importance),
@@ -170,32 +173,6 @@ function numberParam(value: string | null) {
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
-
-function encodeCursor(value: ArticleCursor) {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function parseCursor(value: string | null): ArticleCursor | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      typeof parsed?.sortAt !== "string" ||
-      !Number.isFinite(Date.parse(parsed.sortAt)) ||
-      !Number.isInteger(parsed?.id)
-    ) {
-      return null;
-    }
-    return { sortAt: parsed.sortAt, id: parsed.id };
-  } catch {
-    return null;
-  }
-}
-
-type ArticleCursor = {
-  sortAt: string;
-  id: number;
-};
 
 function importanceLevel(value: number | null) {
   if (value == null) return "low";

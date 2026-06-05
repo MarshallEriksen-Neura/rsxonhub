@@ -145,7 +145,6 @@ export async function registerFeedJobs() {
         jobs.map(async (job) => {
           const result = await ingestFeed(job.data.feedId);
           await enqueueChangedArticleEmbeddings(result);
-          await enqueueAnalysisForCurrentCandidates();
         }),
       );
     },

@@ -14,10 +14,18 @@ import {
   ArrowUp,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, jsonSchema, type UIMessage } from "ai";
+
 import { Streamdown } from "streamdown";
+import "streamdown/styles.css";
+import { mermaid } from "@streamdown/mermaid";
 import { cn } from "@/lib/utils";
-import { mockArticles } from "@/lib/mock/feed";
 import { Button } from "@/components/retroui/Button";
+import type { CitedArticle } from "@/lib/ai/rag";
+import type { ChatMessageMetadata } from "@/app/api/chat/route";
+
+type ChatUIMessage = UIMessage<ChatMessageMetadata>;
 
 /**
  * RAG 问答面板 — Manus 风格双栏布局
@@ -25,17 +33,10 @@ import { Button } from "@/components/retroui/Button";
  * 右侧：始终可见的输入框；空态显示欢迎页与快捷指令，有消息时显示对话流。
  * 输入即建会话：未选中会话时直接发送会自动新建一段对话。
  */
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-  citedArticleIds?: number[];
-  id: string;
-};
-
 type ChatSession = {
   id: string;
   title: string;
-  messages: ChatMessage[];
+  messages: ChatUIMessage[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -67,49 +68,22 @@ function groupByRecency(sessions: ChatSession[]) {
   return buckets.filter((b) => b.items.length > 0);
 }
 
-const INITIAL_SESSIONS: ChatSession[] = [
-  {
-    id: "1",
-    title: "AI 平台竞争分析",
-    messages: [
-      { id: "msg-1", role: "user", content: "最近 AI 平台竞争的核心变化是什么?" },
-      {
-        id: "msg-2",
-        role: "assistant",
-        content:
-          "竞争焦点正从模型能力转向分发与集成:模型差距收窄后,掌握用户入口和集成深度的一方更有优势。",
-        citedArticleIds: [101, 102],
-      },
-    ],
-    createdAt: new Date(Date.now() - DAY),
-    updatedAt: new Date(Date.now() - DAY),
-  },
-  {
-    id: "2",
-    title: "FastMCP 组合方案",
-    messages: [
-      { id: "msg-3", role: "user", content: "如何组合多个 FastMCP 到主 MCP 服务?" },
-      {
-        id: "msg-4",
-        role: "assistant",
-        content: "可以通过代理模式将多个 FastMCP 服务整合到一个主服务中...",
-      },
-    ],
-    createdAt: new Date(Date.now() - DAY * 3),
-    updatedAt: new Date(Date.now() - DAY * 3),
-  },
-];
+const INITIAL_SESSIONS: ChatSession[] = [];
 
 export function ChatPanel() {
   const [sessions, setSessions] = useState<ChatSession[]>(INITIAL_SESSIONS);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
-  const hasMessages = (activeSession?.messages.length ?? 0) > 0;
+  const { messages, setMessages, sendMessage, status } = useChat<ChatUIMessage>({
+    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    messageMetadataSchema: jsonSchema({ type: "object" }),
+  });
+
+  const isLoading = status === "streaming" || status === "submitted";
+  const hasMessages = messages.length > 0;
 
   const filtered =
     query.trim() === ""
@@ -121,94 +95,91 @@ export function ChatPanel() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeSession?.messages, isTyping]);
+  }, [messages, isLoading]);
+
+  const flushToSession = useCallback(
+    (sessionId: string, currentMessages: ChatUIMessage[]) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? { ...s, messages: currentMessages, updatedAt: new Date() }
+            : s,
+        ),
+      );
+    },
+    [],
+  );
 
   const createNewSession = useCallback(() => {
+    if (activeSessionId) flushToSession(activeSessionId, messages);
+    setMessages([]);
     setActiveSessionId(null);
     setInput("");
-  }, []);
+  }, [activeSessionId, messages, flushToSession, setMessages]);
+
+  const selectSession = useCallback(
+    (sessionId: string) => {
+      if (activeSessionId) flushToSession(activeSessionId, messages);
+      const target = sessions.find((s) => s.id === sessionId);
+      if (!target) return;
+      setMessages(target.messages);
+      setActiveSessionId(sessionId);
+    },
+    [activeSessionId, messages, sessions, flushToSession, setMessages],
+  );
 
   const deleteSession = useCallback(
     (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      setActiveSessionId((cur) => (cur === sessionId ? null : cur));
+      if (activeSessionId === sessionId) {
+        setMessages([]);
+        setActiveSessionId(null);
+      }
     },
-    [],
+    [activeSessionId, setMessages],
   );
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       const text = input.trim();
-      if (!text) return;
+      if (!text || isLoading) return;
+      setInput("");
 
-      const userMessage: ChatMessage = {
-        role: "user",
-        content: text,
-        id: Date.now().toString(),
-      };
-
-      // 未选中会话 → 输入即建会话
-      let targetId = activeSessionId;
-      if (!targetId) {
-        const fresh: ChatSession = {
-          id: Date.now().toString(),
-          title: text.slice(0, 24) + (text.length > 24 ? "…" : ""),
-          messages: [userMessage],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        targetId = fresh.id;
-        setSessions((prev) => [fresh, ...prev]);
-        setActiveSessionId(fresh.id);
-      } else {
-        const id = targetId;
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === id
-              ? {
-                  ...s,
-                  messages: [...s.messages, userMessage],
-                  updatedAt: new Date(),
-                  title:
-                    s.messages.length === 0
-                      ? text.slice(0, 24) + (text.length > 24 ? "…" : "")
-                      : s.title,
-                }
-              : s,
-          ),
-        );
+      if (!activeSessionId) {
+        const freshId = Date.now().toString();
+        setSessions((prev) => [
+          {
+            id: freshId,
+            title: text.slice(0, 24) + (text.length > 24 ? "…" : ""),
+            messages: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          ...prev,
+        ]);
+        setActiveSessionId(freshId);
       }
 
-      setInput("");
-      setIsTyping(true);
-      const replyFor = targetId;
-      setTimeout(() => {
-        const aiMessage: ChatMessage = {
-          role: "assistant",
-          content:
-            "这是一段模拟回答。接入向量检索后，将基于你的订阅内容给出精准答案，并在下方附上来源引用。",
-          citedArticleIds: [101, 102],
-          id: (Date.now() + 1).toString(),
-        };
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === replyFor
-              ? { ...s, messages: [...s.messages, aiMessage], updatedAt: new Date() }
-              : s,
-          ),
-        );
-        setIsTyping(false);
-      }, 1400);
+      await sendMessage({ text });
     },
-    [input, activeSessionId],
+    [input, isLoading, activeSessionId, sendMessage],
   );
+
+  useEffect(() => {
+    if (!activeSessionId || messages.length === 0) return;
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === activeSessionId ? { ...s, updatedAt: new Date() } : s,
+      ),
+    );
+  }, [messages.length, activeSessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      void handleSubmit(e);
     }
   };
 
@@ -257,7 +228,7 @@ export function ChatPanel() {
                       key={session.id}
                       session={session}
                       active={activeSessionId === session.id}
-                      onSelect={() => setActiveSessionId(session.id)}
+                      onSelect={() => selectSession(session.id)}
                       onDelete={(e) => deleteSession(session.id, e)}
                     />
                   ))}
@@ -276,7 +247,7 @@ export function ChatPanel() {
               <div className="mx-auto w-full max-w-3xl px-4 py-8 md:px-6">
                 <div className="flex flex-col gap-6">
                   <AnimatePresence mode="popLayout">
-                    {activeSession!.messages.map((message) => (
+                    {messages.map((message) => (
                       <motion.div
                         key={message.id}
                         layout
@@ -289,7 +260,7 @@ export function ChatPanel() {
                       </motion.div>
                     ))}
                   </AnimatePresence>
-                  {isTyping && <TypingIndicator />}
+                  {isLoading && <TypingIndicator />}
                   <div ref={messagesEndRef} />
                 </div>
               </div>
@@ -297,7 +268,7 @@ export function ChatPanel() {
             <div className="border-t border-hairline bg-background/80 px-4 py-4 backdrop-blur-sm md:px-6">
               <MessageInput
                 input={input}
-                setInput={setInput}
+                onInputChange={(e) => setInput(e.target.value)}
                 onSubmit={handleSubmit}
                 onKeyDown={handleKeyDown}
               />
@@ -319,7 +290,7 @@ export function ChatPanel() {
 
               <MessageInput
                 input={input}
-                setInput={setInput}
+                onInputChange={(e) => setInput(e.target.value)}
                 onSubmit={handleSubmit}
                 onKeyDown={handleKeyDown}
                 autoFocus
@@ -402,13 +373,13 @@ function SidebarEmpty({ hasQuery }: { hasQuery: boolean }) {
 
 function MessageInput({
   input,
-  setInput,
+  onInputChange,
   onSubmit,
   onKeyDown,
   autoFocus,
 }: {
   input: string;
-  setInput: (value: string) => void;
+  onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: (e: React.FormEvent) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   autoFocus?: boolean;
@@ -429,7 +400,7 @@ function MessageInput({
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={onInputChange}
           onKeyDown={onKeyDown}
           autoFocus={autoFocus}
           placeholder="分配一个任务或提问任何问题…"
@@ -502,20 +473,29 @@ function QuickActions({ onPick }: { onPick: (label: string) => void }) {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+/** ai v6: UIMessage.parts replaces .content */
+function messageText(message: ChatUIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+function MessageBubble({ message }: { message: ChatUIMessage }) {
+  const text = messageText(message);
+  const cited = message.metadata?.citedArticles;
+
+  const isStreaming = status === "streaming" || status === "submitted";
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-body-md text-primary-foreground">
-          {message.content}
+          {text}
         </div>
       </div>
     );
   }
-
-  const cited = (message.citedArticleIds ?? [])
-    .map((id) => mockArticles.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => Boolean(a));
 
   return (
     <div className="flex flex-col gap-4">
@@ -523,19 +503,27 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface px-4 py-3 text-body-md leading-relaxed text-charcoal">
           <Streamdown
             parseIncompleteMarkdown
+            animated
+            isAnimating={isStreaming}
+            plugins={{ mermaid }}
+            components={{
+              pre: ({ children, ...props }) => (
+                <CodeBlockWithCopy {...props}>{children}</CodeBlockWithCopy>
+              ),
+            }}
             linkSafety={{ enabled: true }}
             className="prose prose-sm max-w-none break-words text-charcoal prose-headings:text-ink prose-strong:text-ink prose-a:text-primary prose-code:text-ink"
           >
-            {message.content}
+            {text}
           </Streamdown>
         </div>
       </div>
-      {cited.length > 0 && <SourceCitations articles={cited} />}
+      {cited && cited.length > 0 && <SourceCitations articles={cited} />}
     </div>
   );
 }
 
-function SourceCitations({ articles }: { articles: typeof mockArticles }) {
+function SourceCitations({ articles }: { articles: CitedArticle[] }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -550,7 +538,7 @@ function SourceCitations({ articles }: { articles: typeof mockArticles }) {
         {articles.map((article) => (
           <a
             key={article.id}
-            href={article.url}
+            href={article.url ?? "#"}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-3 rounded-xl border border-hairline bg-surface-soft p-3 no-underline transition-all hover:border-primary/30 hover:bg-surface"
@@ -558,16 +546,43 @@ function SourceCitations({ articles }: { articles: typeof mockArticles }) {
             <FileText size={16} aria-hidden className="shrink-0 text-primary" />
             <span className="flex min-w-0 flex-col">
               <span className="truncate text-body-sm-medium text-ink">
-                {article.title}
+                {article.title ?? "未知文章"}
               </span>
               <span className="truncate text-caption text-steel">
-                {article.feedTitle}
+                {article.url ?? ""}
               </span>
             </span>
           </a>
         ))}
       </div>
     </motion.div>
+  );
+}
+
+function CodeBlockWithCopy({ children, ...props }: React.HTMLAttributes<HTMLPreElement>) {
+  const [copied, setCopied] = useState(false);
+  const ref = useRef<HTMLPreElement>(null);
+
+  const copy = () => {
+    const text = ref.current?.textContent ?? "";
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <pre ref={ref} {...props} className="relative group">
+      {children}
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="复制代码"
+        className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-micro bg-surface/80 text-stone opacity-0 transition-opacity group-hover:opacity-100 hover:text-ink"
+      >
+        {copied ? "已复制" : "复制"}
+      </button>
+    </pre>
   );
 }
 

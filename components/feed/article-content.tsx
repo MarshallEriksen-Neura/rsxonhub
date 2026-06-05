@@ -84,6 +84,61 @@ export function ArticleContent({
     };
   }, [html]);
 
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+
+    const codeBlocks = Array.from(root.querySelectorAll("pre")).filter(
+      (pre) =>
+        pre.querySelector("code") &&
+        !pre.parentElement?.classList.contains("article-code-block"),
+    );
+    const cleanups: Array<() => void> = [];
+
+    for (const pre of codeBlocks) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "article-code-block";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "article-code-copy";
+      button.textContent = "复制";
+      button.title = "复制代码";
+      button.setAttribute("aria-label", "复制代码");
+
+      pre.parentNode?.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
+      wrapper.appendChild(button);
+
+      let resetTimer: number | undefined;
+      const handleCopy = async () => {
+        const code = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
+        await copyText(code.trimEnd());
+        button.textContent = "已复制";
+        button.setAttribute("aria-label", "代码已复制");
+        if (resetTimer) window.clearTimeout(resetTimer);
+        resetTimer = window.setTimeout(() => {
+          button.textContent = "复制";
+          button.setAttribute("aria-label", "复制代码");
+        }, 1200);
+      };
+
+      button.addEventListener("click", handleCopy);
+      cleanups.push(() => {
+        button.removeEventListener("click", handleCopy);
+        if (resetTimer) window.clearTimeout(resetTimer);
+        if (wrapper.parentNode) {
+          wrapper.parentNode.insertBefore(pre, wrapper);
+          wrapper.remove();
+        }
+      });
+    }
+
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, [html]);
+
   if (typeof html !== "string" || html.trim().length === 0) {
     return (
       <p className="text-body-md leading-relaxed text-steel">
@@ -103,4 +158,25 @@ export function ArticleContent({
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the legacy path for restricted clipboard contexts.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }

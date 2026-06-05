@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 
 @source "../node_modules/streamdown/dist/index.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -879,6 +880,48 @@
     border-radius: var(--notion-radius-md);
     overflow-x: auto;
     line-height: 1.5;
+  }
+
+  .prose-article .article-code-block {
+    position: relative;
+    margin-block: var(--notion-space-lg);
+  }
+
+  .prose-article .article-code-block pre {
+    margin-block: 0;
+    padding-right: 5rem;
+  }
+
+  .prose-article .article-code-copy {
+    position: absolute;
+    top: 0.625rem;
+    right: 0.625rem;
+    z-index: 1;
+    min-height: 1.75rem;
+    border: 1px solid var(--notion-color-hairline-strong);
+    border-radius: var(--notion-radius-sm);
+    background: color-mix(in srgb, var(--notion-color-canvas) 92%, transparent);
+    color: var(--notion-color-steel);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0.375rem 0.625rem;
+    box-shadow: var(--notion-shadow-xs);
+    transition:
+      background-color 160ms var(--notion-ease),
+      border-color 160ms var(--notion-ease),
+      color 160ms var(--notion-ease);
+  }
+
+  .prose-article .article-code-copy:hover {
+    border-color: var(--notion-color-hairline-strong);
+    background: var(--notion-color-canvas);
+    color: var(--notion-color-ink);
+  }
+
+  .prose-article .article-code-copy:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   .prose-article pre code {

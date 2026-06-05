@@ -1,21 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ExternalLink,
   MessagesSquare,
   FileText,
   Sparkles,
-  ChevronDown,
   X,
   Star,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Dialog } from "@/components/retroui/Dialog";
 import { type Importance } from "@/lib/mock/feed";
 import type { ArticleView } from "@/components/feed/article-list";
 import { useFeedStore } from "@/lib/stores/feed";
-import { useAiSummaryStore } from "@/lib/stores/ai-summary";
+import { toast } from "sonner";
+import { Accordion } from "@/components/retroui/Accordion";
 import { Button } from "@/components/retroui/Button";
 import { Badge } from "@/components/retroui/Badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -50,6 +53,7 @@ export function ArticleDetail() {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [heroImageLoaded, setHeroImageLoaded] = useState(false);
   const [starred, setStarred] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const openLightbox = (src: string) => setLightbox(src);
 
   useEffect(() => {
@@ -73,6 +77,7 @@ export function ArticleDetail() {
           setArticle(loaded);
           setStarred(loaded?.status === "star");
           setHeroImageLoaded(false);
+          setIsFullscreen(false);
           setError(null);
         }
       } catch (loadError) {
@@ -113,6 +118,16 @@ export function ArticleDetail() {
     <article className="flex flex-1 flex-col overflow-y-auto bg-background">
       {/* 顶部操作栏 */}
       <div className="sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-hairline bg-background/80 px-6 py-3 backdrop-blur-sm">
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="全屏阅读"
+          title="全屏阅读"
+          onClick={() => setIsFullscreen(true)}
+          className="size-9"
+        >
+          <Maximize2 size={16} aria-hidden />
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -226,84 +241,246 @@ export function ArticleDetail() {
           onClose={() => setLightbox(null)}
         />
       </div>
+
+      <FullscreenArticleReader
+        article={visibleArticle}
+        open={isFullscreen}
+        onClose={() => setIsFullscreen(false)}
+        onMediaClick={openLightbox}
+      />
     </article>
   );
 }
 
-/**
- * AI 摘要 · 按需加载。
- * 默认折叠,只显示一个触发按钮;点击后才"请求"后端摘要,
- * 等待期间用 Skeleton 占位,返回后展示摘要正文与要点。
- * 加载状态按文章 id 缓存(见 ai-summary store),切回不重复请求。
- */
-function AiSummary({ article }: { article: ArticleView }) {
-  const status = useAiSummaryStore((s) => s.status[article.id] ?? "idle");
-  const expanded = useAiSummaryStore((s) => s.expanded[article.id] ?? false);
-  const toggle = useAiSummaryStore((s) => s.toggle);
+function FullscreenArticleReader({
+  article,
+  open,
+  onClose,
+  onMediaClick,
+}: {
+  article: ArticleView;
+  open: boolean;
+  onClose: () => void;
+  onMediaClick: (src: string) => void;
+}) {
+  const prefersReducedMotion = useReducedMotion();
 
-  const isLoading = status === "loading";
-  const isReady = status === "ready";
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  const contentTransition = prefersReducedMotion
+    ? { duration: 0.01 }
+    : { type: "spring" as const, stiffness: 220, damping: 28, mass: 0.85 };
 
   return (
-    <section className="flex flex-col rounded-lg border-l-4 border-primary bg-primary/5">
-      {/* 触发头:点击切换显隐 */}
-      <button
-        type="button"
-        onClick={() => toggle(article.id)}
-        aria-expanded={expanded}
-        className="flex items-center gap-2 rounded-r-lg px-5 py-4 text-left transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-      >
-        <Sparkles size={16} className="text-primary" aria-hidden />
-        <span className="text-xs font-semibold uppercase tracking-wider text-steel">
-          AI 摘要
-        </span>
-        {!expanded ? (
-          <span className="text-caption text-stone">点击生成</span>
-        ) : null}
-        <ChevronDown
-          size={16}
-          aria-hidden
-          className={cn(
-            "ml-auto text-stone transition-transform",
-            expanded && "rotate-180",
-          )}
-        />
-      </button>
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          className="fixed inset-0 z-50 flex bg-ink-deep/35 p-0 backdrop-blur-sm md:p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-label="全屏阅读"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: prefersReducedMotion ? 0.01 : 0.18 }}
+        >
+          <motion.section
+            className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden border border-hairline bg-background shadow-2xl md:rounded-lg"
+            initial={
+              prefersReducedMotion
+                ? { opacity: 0 }
+                : { opacity: 0, scale: 0.965, y: 18 }
+            }
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={
+              prefersReducedMotion
+                ? { opacity: 0 }
+                : { opacity: 0, scale: 0.975, y: 10 }
+            }
+            transition={contentTransition}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-hairline bg-background/90 px-4 py-3 backdrop-blur-sm md:px-6">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium text-steel">
+                  {article.feedTitle}
+                </p>
+                <p className="truncate text-body-sm font-semibold text-charcoal">
+                  {article.title}
+                </p>
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="退出全屏"
+                title="退出全屏"
+                onClick={onClose}
+                className="size-9 shrink-0"
+              >
+                <Minimize2 size={16} aria-hidden />
+              </Button>
+            </div>
 
-      {/* 展开区:loading 用 Skeleton 占位,ready 显示摘要 */}
-      {expanded ? (
-        <div className="flex flex-col gap-4 px-5 pb-5">
-          {isLoading ? (
-            <div className="flex flex-col gap-3" aria-busy aria-live="polite">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-11/12" />
-              <Skeleton className="h-4 w-4/5" />
-              <div className="mt-1 flex flex-col gap-2">
-                <Skeleton className="h-3 w-3/4" />
-                <Skeleton className="h-3 w-2/3" />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-5 py-8 md:px-8 lg:py-10">
+                <header className="flex flex-col gap-4">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-steel">
+                    <span className="font-medium text-charcoal">{article.feedTitle}</span>
+                    {article.author ? (
+                      <>
+                        <span aria-hidden className="text-stone">·</span>
+                        <span>{article.author}</span>
+                      </>
+                    ) : null}
+                    <span aria-hidden className="text-stone">·</span>
+                    <time dateTime={article.publishedAt} className="text-stone">
+                      {new Date(article.publishedAt).toLocaleString("zh-CN")}
+                    </time>
+                  </div>
+
+                  <h1 className="font-head text-heading-3 font-semibold leading-tight tracking-tight text-ink-deep md:text-heading-2">
+                    {article.title}
+                  </h1>
+                </header>
+
+                {article.imageUrl ? (
+                  <MediaLightbox src={article.imageUrl} alt={article.title ?? ""}>
+                    <div className="overflow-hidden rounded-lg border border-hairline bg-surface">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={article.imageUrl}
+                        alt={article.title ?? ""}
+                        className="block w-full cursor-zoom-in object-cover transition-opacity hover:opacity-90"
+                      />
+                    </div>
+                  </MediaLightbox>
+                ) : null}
+
+                <ArticleContent html={article.content} onMediaClick={onMediaClick} />
               </div>
             </div>
-          ) : null}
+          </motion.section>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
 
-          {isReady ? (
+type SummaryData = { summary: string; bullets: string[]; tags: string[]; importance: number };
+
+/**
+ * AI 摘要。
+ * 展开时若已有摘要直接显示，否则请求后端生成。
+ * 未配置 AI 时 toast 提示。
+ */
+function AiSummary({ article }: { article: ArticleView }) {
+  // 以 article.summary 作为初始值，切换文章时重置
+  const [data, setData] = useState<SummaryData | null>(
+    article.summary.trim() ? { summary: article.summary, bullets: article.bullets, tags: article.tags, importance: 0 } : null,
+  );
+  const [loading, setLoading] = useState(false);
+  const articleIdRef = useRef(article.id);
+
+  // 文章切换时重置
+  if (articleIdRef.current !== article.id) {
+    articleIdRef.current = article.id;
+    const next = article.summary.trim()
+      ? { summary: article.summary, bullets: article.bullets, tags: article.tags, importance: 0 }
+      : null;
+    // 直接赋值（render 中同步更新，避免 stale）
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    setData(next);
+    setLoading(false);
+  }
+
+  async function handleOpen(open: boolean) {
+    if (!open || data || loading) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch("/api/articles/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleId: article.id }),
+      });
+      const payload = await res.json();
+
+      if (!res.ok) {
+        if (payload.error === "AI_NOT_CONFIGURED") {
+          toast.warning("未配置 AI，请前往设置填写 API Key。");
+        } else {
+          toast.error(payload.message ?? "摘要生成失败");
+        }
+        return;
+      }
+
+      if (payload.summary) {
+        setData(payload.summary);
+      }
+    } catch {
+      toast.error("网络错误，摘要加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Accordion
+      className="rounded-lg border-l-4 border-primary bg-primary/5 shadow-none"
+      onValueChange={(openItems) => void handleOpen((openItems as string[]).includes("ai-summary"))}
+    >
+      <Accordion.Item value="ai-summary" className="border-0 shadow-none bg-transparent">
+        <Accordion.Header className="gap-2 px-5 py-4 hover:bg-primary/10 focus-visible:ring-primary/40">
+          <Sparkles size={16} className={cn("text-primary", loading && "animate-pulse")} aria-hidden />
+          <span className="text-xs font-semibold uppercase tracking-wider text-steel">
+            AI 摘要
+          </span>
+          {!data && !loading && (
+            <span className="text-caption text-stone">暂无</span>
+          )}
+        </Accordion.Header>
+        <Accordion.Content className="flex flex-col gap-4 px-5 pb-5 pt-0">
+          {loading ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-4/6" />
+            </div>
+          ) : data ? (
             <>
-              <p className="text-body-md leading-relaxed text-charcoal">
-                {article.summary}
-              </p>
-              {article.bullets.length > 0 ? (
+              <p className="text-body-md leading-relaxed text-charcoal">{data.summary}</p>
+              {data.bullets.length > 0 && (
                 <ul className="flex list-disc flex-col gap-2 pl-5 text-body-sm leading-relaxed text-slate">
-                  {article.bullets.map((b, i) => (
-                    <li key={i} className="marker:text-primary">
-                      {b}
-                    </li>
+                  {data.bullets.map((b, i) => (
+                    <li key={i} className="marker:text-primary">{b}</li>
                   ))}
                 </ul>
-              ) : null}
+              )}
             </>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+          ) : (
+            <p className="text-body-sm leading-relaxed text-stone">暂无 AI 摘要。</p>
+          )}
+        </Accordion.Content>
+      </Accordion.Item>
+    </Accordion>
   );
 }
 

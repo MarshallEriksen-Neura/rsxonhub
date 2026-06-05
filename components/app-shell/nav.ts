@@ -1,4 +1,4 @@
-import { Rss, MessagesSquare, Settings } from "lucide-react";
+import { CircleAlert, MessagesSquare, Rss, Settings, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export interface NavItem {
@@ -13,7 +13,9 @@ export interface NavItem {
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/feed", label: "订阅", icon: Rss },
+  { href: "/digest", label: "每日精选", icon: Sparkles },
   { href: "/chat", label: "AI 问答", icon: MessagesSquare },
+  { href: "/logs", label: "错误日志", icon: CircleAlert },
   { href: "/settings", label: "设置", icon: Settings },
 ] as const;
 
