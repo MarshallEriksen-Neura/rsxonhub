@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/schema";
 import {
   createDigestRun,
+  hasCompletedDigestRun,
   markDigestRunFinished,
   markDigestRunRunning,
   normalizeRunError,
@@ -74,6 +75,22 @@ export async function generateDailyDigest(input: GenerateDailyDigestInput = {}) 
           status: "skipped",
           error: "no_interest_profile",
         });
+      } else {
+        const alreadySkipped = await hasCompletedDigestRun({
+          digestDate,
+          interestProfileVersion: 0,
+          phase: "generate",
+          statuses: ["skipped"],
+        });
+        if (!alreadySkipped) {
+          await createDigestRun({
+            digestDate,
+            interestProfileVersion: 0,
+            phase: "generate",
+            status: "skipped",
+            error: "no_interest_profile",
+          });
+        }
       }
       return { skipped: true as const, reason: "no_interest_profile" };
     }

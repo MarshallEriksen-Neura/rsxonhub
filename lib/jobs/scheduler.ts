@@ -7,20 +7,16 @@ import {
   createDigestRun,
   hasCompletedDigestRun,
   hasSuccessfulDigest,
-  markDigestRunFinished,
-  normalizeRunError,
 } from "@/lib/digest/runs";
 import { getActiveInterestProfile } from "@/lib/interests/profile";
 import {
-  enqueueAnalysisForCurrentCandidates,
   enqueueDailyDigest,
-  enqueueDueFeedScan,
+  enqueueDailyDigestPreparation,
 } from "@/lib/jobs/feed-jobs";
 import {
   decideDailyDigestSchedule,
   type DigestScheduleConfig,
 } from "@/lib/jobs/scheduler-core";
-import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
 
 export { decideDailyDigestSchedule };
 
@@ -99,7 +95,7 @@ export async function enqueueDueDailyDigest(now = new Date()) {
   });
 
   if (decision.action === "prepare") {
-    await runDigestPreparation({
+    await enqueueDailyDigestPreparation({
       digestDate: decision.digestDate,
       interestProfileVersion: profile.version,
     });
@@ -113,37 +109,4 @@ export async function enqueueDueDailyDigest(now = new Date()) {
   }
 
   return decision;
-}
-
-async function runDigestPreparation(input: {
-  digestDate: string;
-  interestProfileVersion: number;
-}) {
-  const run = await createDigestRun({
-    digestDate: input.digestDate,
-    interestProfileVersion: input.interestProfileVersion,
-    phase: "prepare",
-    status: "running",
-  });
-
-  try {
-    await enqueueDueFeedScan();
-    const candidates = await selectDigestCandidates({ digestDate: input.digestDate });
-    const enqueuedAnalysisCount = await enqueueAnalysisForCurrentCandidates(input.digestDate);
-
-    await markDigestRunFinished(run.id, {
-      status: candidates.length > 0 ? "success" : "skipped",
-      error: candidates.length > 0 ? null : "no_candidates",
-      metadata: {
-        candidateCount: candidates.length,
-        enqueuedAnalysisCount,
-      },
-    });
-  } catch (error) {
-    await markDigestRunFinished(run.id, {
-      status: "failed",
-      error: normalizeRunError(error),
-    });
-    throw error;
-  }
 }

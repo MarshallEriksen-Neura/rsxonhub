@@ -13,6 +13,9 @@ import {
   attachDigestRunJob,
   createDigestRun,
   hasCompletedDigestRun,
+  markDigestRunFinished,
+  markDigestRunRunning,
+  normalizeRunError,
 } from "@/lib/digest/runs";
 import { getScheduleLocalDate } from "@/lib/datetime";
 import { env } from "@/lib/env";
@@ -23,6 +26,7 @@ import {
   type ArticleAnalyzeJob,
   type ArticleEmbedJob,
   type DigestGenerateDailyJob,
+  type DigestPrepareDailyJob,
   type FeedFetchOneJob,
 } from "@/lib/jobs/names";
 import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
@@ -150,20 +154,109 @@ export async function enqueueDailyDigest(input: DigestGenerateDailyJob = {}) {
         })
       : null;
 
-  const jobId = await boss.send(
-    JOB_NAMES.digestGenerateDaily,
-    {
+  let jobId: string | null;
+  try {
+    jobId = await boss.send(
+      JOB_NAMES.digestGenerateDaily,
+      {
+        digestDate,
+        interestProfileVersion: profileVersion,
+        runId: input.runId ?? pendingRun?.id,
+      },
+      {
+        retryLimit: 2,
+        retryBackoff: true,
+        singletonKey: `digest:${digestDate}:${profileVersion}`,
+        singletonSeconds: 60 * 60 * 12,
+      },
+    );
+  } catch (error) {
+    if (pendingRun) {
+      await markDigestRunFinished(pendingRun.id, {
+        status: "failed",
+        error: normalizeRunError(error),
+      });
+    }
+    throw error;
+  }
+
+  if (pendingRun) {
+    await attachDigestRunJob(pendingRun.id, jobId ?? null);
+  }
+
+  return jobId;
+}
+
+export async function enqueueDailyDigestPreparation(input: DigestPrepareDailyJob = {}) {
+  const boss = await startBoss();
+  const digestDate = input.digestDate ?? getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const profileVersion =
+    input.interestProfileVersion ?? (await getActiveInterestProfile())?.version;
+
+  if (!profileVersion) {
+    const alreadySkipped = await hasCompletedDigestRun({
       digestDate,
-      interestProfileVersion: profileVersion,
-      runId: input.runId ?? pendingRun?.id,
-    },
-    {
-      retryLimit: 2,
-      retryBackoff: true,
-      singletonKey: `digest:${digestDate}:${profileVersion}`,
-      singletonSeconds: 60 * 60 * 12,
-    },
-  );
+      interestProfileVersion: 0,
+      phase: "prepare",
+      statuses: ["skipped"],
+    });
+    if (!alreadySkipped) {
+      await createDigestRun({
+        digestDate,
+        interestProfileVersion: 0,
+        phase: "prepare",
+        status: "skipped",
+        error: "no_interest_profile",
+      });
+    }
+    return null;
+  }
+
+  const inFlight = await hasCompletedDigestRun({
+    digestDate,
+    interestProfileVersion: profileVersion,
+    phase: "prepare",
+    statuses: ["pending", "running"],
+  });
+  if (inFlight) {
+    return null;
+  }
+
+  const pendingRun =
+    input.runId == null
+      ? await createDigestRun({
+          digestDate,
+          interestProfileVersion: profileVersion,
+          phase: "prepare",
+          status: "pending",
+        })
+      : null;
+
+  let jobId: string | null;
+  try {
+    jobId = await boss.send(
+      JOB_NAMES.digestPrepareDaily,
+      {
+        digestDate,
+        interestProfileVersion: profileVersion,
+        runId: input.runId ?? pendingRun?.id,
+      },
+      {
+        retryLimit: 1,
+        retryBackoff: true,
+        singletonKey: `digest.prepare:${digestDate}:${profileVersion}`,
+        singletonSeconds: 60 * 30,
+      },
+    );
+  } catch (error) {
+    if (pendingRun) {
+      await markDigestRunFinished(pendingRun.id, {
+        status: "failed",
+        error: normalizeRunError(error),
+      });
+    }
+    throw error;
+  }
 
   if (pendingRun) {
     await attachDigestRunJob(pendingRun.id, jobId ?? null);
@@ -234,12 +327,71 @@ export async function registerFeedJobs() {
     },
   );
 
+  await boss.work<DigestPrepareDailyJob>(
+    JOB_NAMES.digestPrepareDaily,
+    async (jobs: Job<DigestPrepareDailyJob>[]) => {
+      await Promise.all(jobs.map((job) => runDigestPreparation(job.data)));
+    },
+  );
+
   await boss.work<DigestGenerateDailyJob>(
     JOB_NAMES.digestGenerateDaily,
     async (jobs: Job<DigestGenerateDailyJob>[]) => {
       await Promise.all(jobs.map((job) => generateDailyDigest(job.data)));
     },
   );
+}
+
+export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
+  const digestDate = input.digestDate ?? getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const profileVersion =
+    input.interestProfileVersion ?? (await getActiveInterestProfile())?.version;
+
+  if (!profileVersion) {
+    return { skipped: true as const, reason: "no_interest_profile" };
+  }
+
+  const run =
+    input.runId != null
+      ? { id: input.runId }
+      : await createDigestRun({
+          digestDate,
+          interestProfileVersion: profileVersion,
+          phase: "prepare",
+          status: "running",
+        });
+
+  if (input.runId != null) {
+    await markDigestRunRunning(input.runId);
+  }
+
+  try {
+    await enqueueDueFeedScan();
+    const candidates = await selectDigestCandidates({ digestDate });
+    const enqueuedAnalysisCount = await enqueueAnalysisForCurrentCandidates(digestDate);
+
+    await markDigestRunFinished(run.id, {
+      status: candidates.length > 0 ? "success" : "skipped",
+      error: candidates.length > 0 ? null : "no_candidates",
+      metadata: {
+        candidateCount: candidates.length,
+        enqueuedAnalysisCount,
+      },
+    });
+
+    return {
+      skipped: candidates.length === 0,
+      reason: candidates.length === 0 ? "no_candidates" : null,
+      candidateCount: candidates.length,
+      enqueuedAnalysisCount,
+    };
+  } catch (error) {
+    await markDigestRunFinished(run.id, {
+      status: "failed",
+      error: normalizeRunError(error),
+    });
+    throw error;
+  }
 }
 
 export async function enqueueAnalysisForCurrentCandidates(digestDate?: string) {
