@@ -3,7 +3,9 @@ import { AlertTriangle, Clock, Database, Rss } from "lucide-react";
 import { Badge } from "@/components/retroui/Badge";
 import { Empty } from "@/components/retroui/Empty";
 import { db } from "@/lib/db";
-import { appErrorLogs, feeds } from "@/lib/db/schema";
+import { appErrorLogs, digestItems, digestRuns, digests, feeds } from "@/lib/db/schema";
+import { getScheduleLocalDate } from "@/lib/datetime";
+import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
 const RECENT_LOG_LIMIT = 100;
@@ -11,12 +13,16 @@ const RECENT_LOG_LIMIT = 100;
 type ErrorLogRow = Awaited<ReturnType<typeof getErrorLogs>>[number];
 
 export default async function LogsPage() {
-  const [logs, stats] = await Promise.all([getErrorLogs(), getErrorLogStats()]);
+  const [logs, stats, digestStatus] = await Promise.all([
+    getErrorLogs(),
+    getErrorLogStats(),
+    getDigestRunSummary(),
+  ]);
 
   return (
     <main className="min-h-0 flex-1 overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-5 lg:px-7 lg:py-6">
-        <section className="grid gap-3 sm:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-4">
           <StatTile
             icon={Database}
             label="总日志"
@@ -35,6 +41,52 @@ export default async function LogsPage() {
             value={stats.rss}
             tone={stats.rss > 0 ? "danger" : "neutral"}
           />
+          <StatTile
+            icon={Clock}
+            label="今日精选运行"
+            value={digestStatus.latestRun ? 1 : 0}
+            tone={
+              digestStatus.latestRun?.status === "failed"
+                ? "danger"
+                : digestStatus.latestRun?.status === "skipped"
+                  ? "warning"
+                  : "neutral"
+            }
+          />
+        </section>
+
+        <section className="flex flex-col gap-3 border border-hairline bg-surface-soft p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-col gap-1">
+              <h2 className="text-body-md-medium text-ink">每日精选运行状态</h2>
+              <p className="text-body-sm text-steel">
+                {digestStatus.digestDate} · 下次触发 {env.DIGEST_GENERATE_AT} {env.DIGEST_TIMEZONE}
+              </p>
+            </div>
+            <Badge variant="outline" size="sm">
+              {digestStatus.latestRun
+                ? `${digestStatus.latestRun.phase} / ${digestStatus.latestRun.status}`
+                : "暂无运行"}
+            </Badge>
+          </div>
+          <div className="grid gap-3 text-body-sm text-charcoal sm:grid-cols-4">
+            <StatusCell
+              label="最近完成"
+              value={
+                digestStatus.latestRun?.finishedAt
+                  ? digestStatus.latestRun.finishedAt.toLocaleString("zh-CN")
+                  : "暂无"
+              }
+            />
+            <StatusCell label="入选文章" value={digestStatus.selectedCount} />
+            <StatusCell label="模型" value={digestStatus.digest?.model ?? "暂无"} />
+            <StatusCell label="Tokens" value={digestStatus.digest?.tokenCost ?? 0} />
+          </div>
+          {digestStatus.latestRun?.error ? (
+            <p className="break-words border-l-2 border-destructive/50 bg-destructive/5 px-3 py-2 text-body-sm text-destructive">
+              {digestStatus.latestRun.error}
+            </p>
+          ) : null}
         </section>
 
         <section className="flex flex-col gap-3">
@@ -116,6 +168,40 @@ async function getErrorLogStats() {
     total: row?.total ?? 0,
     lastDay: row?.lastDay ?? 0,
     rss: row?.rss ?? 0,
+  };
+}
+
+async function getDigestRunSummary() {
+  const digestDate = getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const [latestRun, digest] = await Promise.all([
+    db
+      .select()
+      .from(digestRuns)
+      .where(eq(digestRuns.digestDate, digestDate))
+      .orderBy(desc(digestRuns.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+    db
+      .select({
+        id: digests.id,
+        model: digests.model,
+        tokenCost: digests.tokenCost,
+        selectedCount: sql<number>`count(${digestItems.id})::int`,
+      })
+      .from(digests)
+      .leftJoin(digestItems, eq(digestItems.digestId, digests.id))
+      .where(eq(digests.digestDate, digestDate))
+      .groupBy(digests.id)
+      .orderBy(desc(digests.updatedAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+  ]);
+
+  return {
+    digestDate,
+    latestRun,
+    digest,
+    selectedCount: digest?.selectedCount ?? 0,
   };
 }
 
@@ -218,6 +304,15 @@ function StatTile({
           tone === "danger" && "text-destructive",
         )}
       />
+    </div>
+  );
+}
+
+function StatusCell({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-micro font-medium text-steel">{label}</span>
+      <span className="break-words text-body-sm-medium text-ink">{value}</span>
     </div>
   );
 }

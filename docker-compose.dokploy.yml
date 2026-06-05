@@ -17,6 +17,11 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL}
       - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - DIGEST_TIMEZONE=${DIGEST_TIMEZONE:-Asia/Shanghai}
+      - DIGEST_GENERATE_AT=${DIGEST_GENERATE_AT:-08:00}
+      - DIGEST_PREPARE_AT=${DIGEST_PREPARE_AT:-07:30}
+      - DIGEST_TRIGGER_WINDOW_MINUTES=${DIGEST_TRIGGER_WINDOW_MINUTES:-10}
+      - DIGEST_SCAN_INTERVAL_MS=${DIGEST_SCAN_INTERVAL_MS:-300000}
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_USERNAME=${AUTH_USERNAME}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
@@ -58,6 +63,11 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL}
       - RSSHUB_BASE_URL=${RSSHUB_BASE_URL:-https://rsshub.app}
+      - DIGEST_TIMEZONE=${DIGEST_TIMEZONE:-Asia/Shanghai}
+      - DIGEST_GENERATE_AT=${DIGEST_GENERATE_AT:-08:00}
+      - DIGEST_PREPARE_AT=${DIGEST_PREPARE_AT:-07:30}
+      - DIGEST_TRIGGER_WINDOW_MINUTES=${DIGEST_TRIGGER_WINDOW_MINUTES:-10}
+      - DIGEST_SCAN_INTERVAL_MS=${DIGEST_SCAN_INTERVAL_MS:-300000}
       - AUTH_SECRET=${AUTH_SECRET}
     depends_on:
       db:
@@ -82,6 +92,11 @@ networks:
 # AUTH_USERNAME=admin             # 管理员用户名
 # AUTH_PASSWORD=your_password     # 管理员密码(明文,启动时自动哈希)
 # RSSHUB_BASE_URL=https://...     # RSSHub 地址 (可选)
+# DIGEST_TIMEZONE=Asia/Shanghai   # 每日精选调度时区
+# DIGEST_GENERATE_AT=08:00        # 每日精选生成时间
+# DIGEST_PREPARE_AT=07:30         # 每日精选候选预热时间
+# DIGEST_TRIGGER_WINDOW_MINUTES=10
+# DIGEST_SCAN_INTERVAL_MS=300000
 #
 # 生成 AUTH_SECRET:
 # openssl rand -base64 32

@@ -9,6 +9,14 @@ import {
 import { db } from "@/lib/db";
 import { articleSummaries, feeds } from "@/lib/db/schema";
 import { generateDailyDigest } from "@/lib/digest/generate-digest";
+import {
+  attachDigestRunJob,
+  createDigestRun,
+  hasCompletedDigestRun,
+} from "@/lib/digest/runs";
+import { getScheduleLocalDate } from "@/lib/datetime";
+import { env } from "@/lib/env";
+import { getActiveInterestProfile } from "@/lib/interests/profile";
 import { startBoss } from "@/lib/jobs/boss";
 import {
   JOB_NAMES,
@@ -99,17 +107,69 @@ export async function enqueueChangedArticleEmbeddings(
 
 export async function enqueueDailyDigest(input: DigestGenerateDailyJob = {}) {
   const boss = await startBoss();
-  const digestDate = input.digestDate ?? new Date().toISOString().slice(0, 10);
-  return boss.send(
+  const digestDate = input.digestDate ?? getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const profileVersion =
+    input.interestProfileVersion ?? (await getActiveInterestProfile())?.version;
+
+  if (!profileVersion) {
+    const alreadySkipped = await hasCompletedDigestRun({
+      digestDate,
+      interestProfileVersion: 0,
+      phase: "generate",
+      statuses: ["skipped"],
+    });
+    if (!alreadySkipped) {
+      await createDigestRun({
+        digestDate,
+        interestProfileVersion: 0,
+        phase: "generate",
+        status: "skipped",
+        error: "no_interest_profile",
+      });
+    }
+    return null;
+  }
+
+  const inFlight = await hasCompletedDigestRun({
+    digestDate,
+    interestProfileVersion: profileVersion,
+    phase: "generate",
+    statuses: ["pending", "running"],
+  });
+  if (inFlight) {
+    return null;
+  }
+
+  const pendingRun =
+    input.runId == null
+      ? await createDigestRun({
+          digestDate,
+          interestProfileVersion: profileVersion,
+          phase: "generate",
+          status: "pending",
+        })
+      : null;
+
+  const jobId = await boss.send(
     JOB_NAMES.digestGenerateDaily,
-    { digestDate },
+    {
+      digestDate,
+      interestProfileVersion: profileVersion,
+      runId: input.runId ?? pendingRun?.id,
+    },
     {
       retryLimit: 2,
       retryBackoff: true,
-      singletonKey: `digest:${digestDate}`,
+      singletonKey: `digest:${digestDate}:${profileVersion}`,
       singletonSeconds: 60 * 60 * 12,
     },
   );
+
+  if (pendingRun) {
+    await attachDigestRunJob(pendingRun.id, jobId ?? null);
+  }
+
+  return jobId;
 }
 
 export async function enqueueDueFeedScan() {
@@ -182,8 +242,8 @@ export async function registerFeedJobs() {
   );
 }
 
-export async function enqueueAnalysisForCurrentCandidates() {
-  const candidates = await selectDigestCandidates();
+export async function enqueueAnalysisForCurrentCandidates(digestDate?: string) {
+  const candidates = await selectDigestCandidates({ digestDate });
   if (candidates.length === 0) return 0;
 
   const pending = await db

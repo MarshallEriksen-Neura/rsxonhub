@@ -21,4 +21,6 @@ export type ArticleEmbedJob = {
 
 export type DigestGenerateDailyJob = {
   digestDate?: string;
+  interestProfileVersion?: number;
+  runId?: number;
 };

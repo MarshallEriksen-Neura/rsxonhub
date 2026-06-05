@@ -14,6 +14,15 @@ import {
   interestProfiles,
   usageLogs,
 } from "@/lib/db/schema";
+import {
+  createDigestRun,
+  markDigestRunFinished,
+  markDigestRunRunning,
+  normalizeRunError,
+} from "@/lib/digest/runs";
+import { getScheduleLocalDate } from "@/lib/datetime";
+import { env } from "@/lib/env";
+import { getActiveInterestProfile } from "@/lib/interests/profile";
 import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
 
 export const DAILY_DIGEST_PROMPT_VERSION = "daily-digest-v1";
@@ -34,11 +43,77 @@ const digestSchema = z.object({
 
 export type GenerateDailyDigestInput = {
   digestDate?: string;
+  interestProfileVersion?: number;
+  runId?: number;
   maxCandidates?: number;
 };
 
 export async function generateDailyDigest(input: GenerateDailyDigestInput = {}) {
-  const digestDate = input.digestDate ?? todayKey();
+  const digestDate = input.digestDate ?? getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const activeProfile = await getActiveInterestProfile();
+  const run =
+    input.runId != null
+      ? { id: input.runId }
+      : activeProfile
+        ? await createDigestRun({
+            digestDate,
+            interestProfileVersion: activeProfile.version,
+            phase: "generate",
+            status: "running",
+          })
+        : null;
+
+  if (input.runId != null) {
+    await markDigestRunRunning(input.runId);
+  }
+
+  try {
+    if (!activeProfile) {
+      if (run) {
+        await markDigestRunFinished(run.id, {
+          status: "skipped",
+          error: "no_interest_profile",
+        });
+      }
+      return { skipped: true as const, reason: "no_interest_profile" };
+    }
+
+    const result = await generateDailyDigestForProfile({
+      ...input,
+      digestDate,
+      interestProfileVersion: activeProfile.version,
+    });
+
+    if (run) {
+      await markDigestRunFinished(run.id, {
+        status: result.skipped ? "skipped" : "success",
+        error: result.skipped ? result.reason : null,
+        metadata: result.skipped
+          ? undefined
+          : {
+              digestId: result.digestId,
+              selectedCount: result.selectedCount,
+            },
+      });
+    }
+
+    return result;
+  } catch (error) {
+    if (run) {
+      await markDigestRunFinished(run.id, {
+        status: "failed",
+        error: normalizeRunError(error),
+      });
+    }
+    throw error;
+  }
+}
+
+async function generateDailyDigestForProfile(
+  input: Required<Pick<GenerateDailyDigestInput, "digestDate" | "interestProfileVersion">> &
+    Pick<GenerateDailyDigestInput, "maxCandidates">,
+) {
+  const digestDate = input.digestDate;
   let candidates = await getPersistedCandidates(digestDate);
 
   if (candidates.length === 0) {
@@ -51,6 +126,9 @@ export async function generateDailyDigest(input: GenerateDailyDigestInput = {}) 
   }
 
   const profile = candidates[0].interestProfile;
+  if (profile.version !== input.interestProfileVersion) {
+    return { skipped: true as const, reason: "no_candidates" };
+  }
   const config = await getChatConfig();
   const model = await chatModel();
   const result = await withAIRequestRetry(() =>
@@ -211,5 +289,5 @@ async function getPersistedCandidates(digestDate: string) {
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return getScheduleLocalDate(env.DIGEST_TIMEZONE);
 }

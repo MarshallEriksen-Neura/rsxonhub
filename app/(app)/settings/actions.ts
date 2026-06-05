@@ -1,5 +1,6 @@
 "use server";
 
+import { createOpenAI } from "@ai-sdk/openai";
 import { compare, hash } from "bcryptjs";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -124,6 +125,55 @@ export async function saveAISettings(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "保存 AI 配置失败。",
+    };
+  }
+}
+
+const testAIConnectionSchema = z.object({
+  kind: z.enum(["chat", "embedding"]),
+  baseUrl: z.string().url(),
+  apiKey: z.string().optional(),
+  model: z.string().min(1),
+});
+
+export type TestAIConnectionState =
+  | { ok: true; message: string }
+  | { ok: false; message: string };
+
+export async function testAIConnection(
+  input: z.input<typeof testAIConnectionSchema>,
+): Promise<TestAIConnectionState> {
+  try {
+    const parsed = testAIConnectionSchema.parse(input);
+    const saved =
+      parsed.kind === "chat"
+        ? await getAIConfig("chat")
+        : await getAIConfig("embedding");
+    const apiKey = parsed.apiKey?.trim() || saved.apiKey.trim();
+
+    if (!apiKey) {
+      return { ok: false, message: "API Key 未配置。" };
+    }
+
+    const provider = createOpenAI({ baseURL: parsed.baseUrl, apiKey });
+
+    if (parsed.kind === "chat") {
+      const { generateText } = await import("ai");
+      await generateText({
+        model: provider(parsed.model),
+        prompt: "hi",
+        maxOutputTokens: 1,
+      });
+      return { ok: true, message: "对话模型连接成功。" };
+    } else {
+      const { embed } = await import("ai");
+      await embed({ model: provider.embedding(parsed.model), value: "test" });
+      return { ok: true, message: "向量模型连接成功。" };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "连接失败。",
     };
   }
 }

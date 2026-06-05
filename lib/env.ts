@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseClockTime } from "@/lib/datetime";
 import { normalizeHttpUrl } from "@/lib/url";
 
 /**
@@ -20,6 +21,21 @@ const urlString = () =>
     z.string().url(),
   );
 
+const clockString = () =>
+  z.string().refine(
+    (value) => {
+      try {
+        parseClockTime(value);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Expected HH:mm within 00:00-23:59" },
+  );
+
+const positiveIntegerString = () => z.coerce.number().int().positive();
+
 const schema = z.object({
   DATABASE_URL: urlString(),
   RSSHUB_BASE_URL: urlString().default("https://rsshub.app"),
@@ -29,6 +45,12 @@ const schema = z.object({
   AUTH_SECRET: optionalString(),
   AUTH_USERNAME: optionalString(),
   AUTH_PASSWORD: optionalString(),
+
+  DIGEST_TIMEZONE: z.string().min(1).default("Asia/Shanghai"),
+  DIGEST_GENERATE_AT: clockString().default("08:00"),
+  DIGEST_PREPARE_AT: clockString().default("07:30"),
+  DIGEST_TRIGGER_WINDOW_MINUTES: positiveIntegerString().default(10),
+  DIGEST_SCAN_INTERVAL_MS: positiveIntegerString().default(300000),
 });
 
 export const env = schema.parse(process.env);

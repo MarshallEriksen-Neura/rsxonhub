@@ -17,6 +17,16 @@ services:
           property: connectionString
       - key: RSSHUB_BASE_URL
         sync: false
+      - key: DIGEST_TIMEZONE
+        value: Asia/Shanghai
+      - key: DIGEST_GENERATE_AT
+        value: "08:00"
+      - key: DIGEST_PREPARE_AT
+        value: "07:30"
+      - key: DIGEST_TRIGGER_WINDOW_MINUTES
+        value: "10"
+      - key: DIGEST_SCAN_INTERVAL_MS
+        value: "300000"
       - key: AUTH_SECRET
         sync: false
       - key: AUTH_USERNAME
@@ -41,6 +51,16 @@ services:
           property: connectionString
       - key: RSSHUB_BASE_URL
         sync: false
+      - key: DIGEST_TIMEZONE
+        value: Asia/Shanghai
+      - key: DIGEST_GENERATE_AT
+        value: "08:00"
+      - key: DIGEST_PREPARE_AT
+        value: "07:30"
+      - key: DIGEST_TRIGGER_WINDOW_MINUTES
+        value: "10"
+      - key: DIGEST_SCAN_INTERVAL_MS
+        value: "300000"
       - key: AUTH_SECRET
         sync: false
 

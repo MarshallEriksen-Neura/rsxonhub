@@ -1,28 +1,75 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Badge } from "@/components/retroui/Badge";
 import { Button } from "@/components/retroui/Button";
 import { getDailyDigest } from "@/lib/digest/generate-digest";
-
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
+import { getLatestDigestStatus } from "@/lib/digest/runs";
+import { getScheduleLocalDate } from "@/lib/datetime";
+import { env } from "@/lib/env";
+import {
+  generateYesterdayDigest,
+  refreshDigestCandidates,
+  regenerateTodayDigest,
+} from "./actions";
 
 export default async function DigestPage() {
-  const digestDate = todayKey();
-  const data = await getDailyDigest(digestDate);
+  const digestDate = getScheduleLocalDate(env.DIGEST_TIMEZONE);
+  const [data, status] = await Promise.all([
+    getDailyDigest(digestDate),
+    getLatestDigestStatus(digestDate),
+  ]);
 
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
             <h1 className="text-heading-4 font-semibold text-ink">每日精选</h1>
-            <p className="text-body-sm text-steel">{digestDate}</p>
+            <p className="text-body-sm text-steel">
+              {digestDate} · {env.DIGEST_TIMEZONE}
+            </p>
           </div>
           <Badge variant="outline" size="sm">
             {data ? "已生成" : "等待生成"}
           </Badge>
         </div>
+
+        <section className="flex flex-col gap-3 border border-hairline bg-surface-soft p-4">
+          <div className="grid gap-3 text-body-sm text-charcoal sm:grid-cols-3">
+            <StatusItem label="最近运行" value={formatRun(status.latestRun)} />
+            <StatusItem label="入选文章" value={status.digest?.selectedCount ?? 0} />
+            <StatusItem
+              label="模型 / Tokens"
+              value={
+                status.digest
+                  ? `${status.digest.model ?? "unknown"} / ${status.digest.tokenCost ?? 0}`
+                  : "暂无"
+              }
+            />
+          </div>
+          {status.latestRun?.error ? (
+            <p className="break-words border-l-2 border-destructive/50 bg-destructive/5 px-3 py-2 text-body-sm text-destructive">
+              {status.latestRun.error}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <form action={regenerateTodayDigest}>
+              <Button size="sm" type="submit">
+                重新生成今日精选
+              </Button>
+            </form>
+            <form action={generateYesterdayDigest}>
+              <Button size="sm" variant="outline" type="submit">
+                生成昨天
+              </Button>
+            </form>
+            <form action={refreshDigestCandidates}>
+              <Button size="sm" variant="secondary" type="submit">
+                刷新候选
+              </Button>
+            </form>
+          </div>
+        </section>
 
         {!data ? (
           <section className="rounded-lg border border-dashed border-hairline bg-surface-soft px-5 py-8">
@@ -110,4 +157,19 @@ export default async function DigestPage() {
       </div>
     </div>
   );
+}
+
+function StatusItem({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-micro font-medium text-steel">{label}</span>
+      <span className="break-words text-body-sm-medium text-ink">{value}</span>
+    </div>
+  );
+}
+
+function formatRun(run: Awaited<ReturnType<typeof getLatestDigestStatus>>["latestRun"]) {
+  if (!run) return "暂无";
+  const finishedAt = run.finishedAt ? run.finishedAt.toLocaleString("zh-CN") : "未完成";
+  return `${run.phase} / ${run.status} / ${finishedAt}`;
 }

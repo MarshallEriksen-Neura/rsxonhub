@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
+process.env.DATABASE_URL ??= "postgresql://user:password@localhost:5432/rsxonhub_test";
+
 const sendMock = mock(async () => "job-id");
 const getEmbeddingConfigMock = mock(async () => ({
   kind: "embedding" as const,
@@ -23,7 +25,12 @@ mock.module("@/lib/db", () => ({
 
 mock.module("@/lib/db/schema", () => ({
   articleSummaries: {},
+  digestItems: {},
+  digestRuns: {},
+  digests: {},
   feeds: {},
+  interestProfiles: {},
+  usageLogs: {},
 }));
 
 mock.module("@/lib/ai/article-analysis", () => ({
@@ -31,6 +38,13 @@ mock.module("@/lib/ai/article-analysis", () => ({
 }));
 
 mock.module("@/lib/ai/config", () => ({
+  getChatConfig: mock(async () => ({
+    kind: "chat" as const,
+    baseUrl: "https://chat.example/v1",
+    apiKey: "test-key",
+    model: "chat-model",
+    temperature: 0.4,
+  })),
   getEmbeddingConfig: getEmbeddingConfigMock,
 }));
 

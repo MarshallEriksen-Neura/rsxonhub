@@ -342,6 +342,37 @@ export const digests = pgTable(
   (t) => [uniqueIndex("digests_date_profile_idx").on(t.digestDate, t.interestProfileVersion)],
 );
 
+export const digestRuns = pgTable(
+  "digest_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    digestDate: text("digest_date").notNull(),
+    interestProfileVersion: integer("interest_profile_version").notNull(),
+    phase: text("phase", { enum: ["prepare", "generate"] }).notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "success", "failed", "skipped"],
+    })
+      .default("pending")
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    jobId: text("job_id"),
+    error: text("error"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("digest_runs_date_profile_phase_idx").on(
+      t.digestDate,
+      t.interestProfileVersion,
+      t.phase,
+    ),
+    index("digest_runs_status_idx").on(t.status),
+    index("digest_runs_created_idx").on(t.createdAt),
+  ],
+);
+
 export const digestItems = pgTable(
   "digest_items",
   {
@@ -379,6 +410,7 @@ export const schema = {
   feedFetchRuns,
   embeddingRebuildRuns,
   digests,
+  digestRuns,
   digestItems,
 };
 

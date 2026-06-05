@@ -12,10 +12,13 @@ import {
   Lock,
   MessageSquare,
   Search,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import {
   fetchAIModels,
   saveAISettings,
+  testAIConnection,
 } from "@/app/(app)/settings/actions";
 import { Button } from "@/components/retroui/Button";
 import { Input } from "@/components/retroui/Input";
@@ -99,6 +102,8 @@ export function AISection({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [modelFetchKind, setModelFetchKind] = useState<"chat" | "embedding" | null>(null);
+  const [testKind, setTestKind] = useState<"chat" | "embedding" | null>(null);
+  const [testResult, setTestResult] = useState<Record<"chat" | "embedding", { ok: boolean; message: string } | null>>({ chat: null, embedding: null });
   const [modelSearch, setModelSearch] = useState("");
   const [modelFilter, setModelFilter] = useState<"all" | "chat" | "embedding">("all");
   const [pendingRebuild, setPendingRebuild] = useState<{
@@ -180,6 +185,16 @@ export function AISection({
     }
 
     updateChat({ model: model.name });
+  };
+
+  const testConnection = (kind: "chat" | "embedding") => {
+    const config = kind === "chat" ? chat : embedding;
+    setTestKind(kind);
+    startTransition(async () => {
+      const result = await testAIConnection({ kind, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model });
+      setTestKind(null);
+      setTestResult((prev) => ({ ...prev, [kind]: result }));
+    });
   };
 
   const refreshModels = (kind: "chat" | "embedding") => {
@@ -377,6 +392,12 @@ export function AISection({
               loading={modelFetchKind === "chat" && isPending}
               onClick={() => refreshModels("chat")}
             />
+            <TestConnectionButton
+              kind="chat"
+              loading={testKind === "chat" && isPending}
+              result={testResult.chat}
+              onClick={() => testConnection("chat")}
+            />
           </RuntimePanel>
 
           <RuntimePanel
@@ -415,6 +436,12 @@ export function AISection({
               kind="embedding"
               loading={modelFetchKind === "embedding" && isPending}
               onClick={() => refreshModels("embedding")}
+            />
+            <TestConnectionButton
+              kind="embedding"
+              loading={testKind === "embedding" && isPending}
+              result={testResult.embedding}
+              onClick={() => testConnection("embedding")}
             />
           </RuntimePanel>
 
@@ -508,6 +535,54 @@ function RuntimePanel({
         </div>
       </div>
       <div className="grid gap-5 p-5">{children}</div>
+    </div>
+  );
+}
+
+function TestConnectionButton({
+  kind,
+  loading,
+  result,
+  onClick,
+}: {
+  kind: "chat" | "embedding";
+  loading: boolean;
+  result: { ok: boolean; message: string } | null;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-md border border-hairline bg-surface px-4 py-3">
+      <div>
+        <div className="text-body-sm-medium text-ink">连接测试</div>
+        {result ? (
+          <div className={cn("mt-1 text-micro", result.ok ? "text-green-600" : "text-destructive")}>
+            {result.message}
+          </div>
+        ) : (
+          <div className="mt-1 text-micro text-steel">
+            {kind === "chat" ? "验证对话接口是否可用" : "验证向量接口是否可用"}
+          </div>
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onClick}
+        disabled={loading}
+        className="shrink-0 gap-1.5"
+      >
+        {loading ? (
+          <Loader2 size={14} aria-hidden className="animate-spin" />
+        ) : result?.ok ? (
+          <Wifi size={14} aria-hidden className="text-green-600" />
+        ) : result ? (
+          <WifiOff size={14} aria-hidden className="text-destructive" />
+        ) : (
+          <Wifi size={14} aria-hidden />
+        )}
+        测试连接
+      </Button>
     </div>
   );
 }
