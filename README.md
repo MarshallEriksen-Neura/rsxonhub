@@ -1,197 +1,115 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# rsxonhub
 
-## Getting Started
+单用户 RSS × AI 阅读器。自动摘要、标签、重要性评分，每日 Digest，以及对全订阅库的 RAG 问答。
 
-First, run the development server:
+![应用截图](docs/images/hero.png)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 功能
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| 模块 | 说明 |
+|------|------|
+| 📡 RSS 订阅管理 | 添加/删除 Feed，RSSHub 代理，订阅统计 |
+| 🤖 AI 增强 | 自动摘要、标签分类、重要性评分 |
+| 💬 RAG 问答 | 对全部文章库提问，返回带来源引用的答案 |
+| 📋 每日 Digest | 聚合当天重要文章，AI 生成摘要报告 |
+| ⚙️ 后台队列 | pg-boss 管理 RSS 抓取与 AI 处理任务，含队列监控 |
+| 🔐 单用户认证 | Auth.js v5 Credentials + bcrypt，全站保护 |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 截图
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 订阅阅读
 
-## Learn More
+![订阅阅读](docs/images/hero.png)
 
-To learn more about Next.js, take a look at the following resources:
+### AI 问答
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+![AI 问答](docs/images/ai-chat.png)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 队列状态
 
-## Deploy on Vercel
+![队列状态](docs/images/queue-status.png)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 技术栈
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **框架**: Next.js 16 App Router + React 19 + TypeScript strict
+- **数据库**: PostgreSQL + pgvector，Drizzle ORM
+- **AI**: Vercel AI SDK，支持任意 OpenAI-compatible 接口（含 NVIDIA NIM）
+- **队列**: pg-boss
+- **认证**: Auth.js v5
+- **UI**: RetroUI + Tailwind v4
+- **包管理**: Bun
 
----
+## 快速开始
 
-## 🚀 Production Deployment
-
-### Option 1: Docker Compose (Recommended for Self-Hosting)
-
-**Prerequisites:**
-- Docker & Docker Compose installed
-- At least 2GB RAM
-
-**Quick Start:**
+**前置条件**: Bun 1.x，PostgreSQL 15+（已启用 pgvector 扩展）
 
 ```bash
-# 1. Copy environment template
-cp .env.example .env.local
-
-# 2. Generate required secrets
-openssl rand -base64 32  # For AUTH_SECRET
-
-# 3. Edit .env.local with your values
-#    - DATABASE_URL
-#    - AUTH_SECRET
-#    - AUTH_USERNAME
-#    - AUTH_PASSWORD
-
-# 4. Start all services
-DB_PASSWORD=your_secure_password docker-compose up -d
-
-# 5. Initialize database
-docker-compose exec app npx drizzle-kit push
+git clone https://github.com/yourname/rsxonhub
+cd rsxonhub
+bun install
+cp .env.example .env
+# 编辑 .env，至少填写 DATABASE_URL 和 AUTH_SECRET
+bun run db:migrate
+bun run dev
 ```
 
-**Services:**
-- **App**: Next.js application (port 3000)
-- **Database**: PostgreSQL 16 (port 5432)
-- **Worker**: Background tasks (RSS fetching, AI processing)
-
-**Management Commands:**
+访问 http://localhost:3000。在另一个终端启动后台 worker：
 
 ```bash
-# View logs
-docker-compose logs -f app
-docker-compose logs -f worker
-
-# Restart services
-docker-compose restart app
-docker-compose restart worker
-
-# Stop all services
-docker-compose down
-
-# Update and redeploy
-git pull
-docker-compose up -d --build
+bun run worker
 ```
 
-### Option 2: Dokploy / Coolify (Self-Hosted PaaS)
+## 环境变量
 
-**Dokploy Setup:**
+```env
+DATABASE_URL=postgresql://user:pass@localhost:5432/rsxonhub
+AUTH_SECRET=<随机长字符串，可用 openssl rand -base64 32 生成>
+
+# AI 接口（也可在应用内 /settings 页面配置）
+AI_BASE_URL=https://api.openai.com/v1
+AI_API_KEY=sk-...
+```
+
+## 常用命令
 
 ```bash
-# Install Dokploy on your VPS
-curl -sSL https://get.dokploy.com | sh
-
-# Access dashboard at http://your-server-ip:3000
+bun run dev          # 开发服务器
+bun run build        # 生产构建（含类型检查）
+bun run lint         # ESLint
+bun run test         # 单元测试
+bun run worker       # 后台任务 worker
+bun run db:generate  # 生成 Drizzle 迁移文件
+bun run db:migrate   # 执行数据库迁移
+bun run db:studio    # 打开 Drizzle Studio
 ```
 
-**Deployment Steps:**
-1. Connect your Git repository
-2. Select `docker-compose.dokploy.yml` as compose file
-3. Configure environment variables:
-   - `DOMAIN=your-domain.com`
-   - `DATABASE_URL=postgresql://...`
-   - `DB_PASSWORD=strong_password`
-   - `AUTH_SECRET=<generated_secret>`
-   - `AUTH_USERNAME=admin`
-   - `AUTH_PASSWORD=your_password`
-4. Deploy! Traefik will handle SSL automatically
+## 部署
 
-### Option 3: Railway
+内置多种部署配置：
 
-**One-Click Deploy:**
+- `docker-compose.yml` — 本地/VPS 自托管
+- `docker-compose.dokploy.yml` — Dokploy 生产部署
+- `render.yaml` — Render 一键部署
 
-1. Create account at [railway.app](https://railway.app)
-2. Click "New Project" → "Deploy from GitHub repo"
-3. Railway auto-detects `railway.json` and `Procfile`
-4. Add PostgreSQL database from Railway dashboard
-5. Configure environment variables in Railway UI
-6. Deploy!
+详见 [docs/deployment-checklist.md](docs/deployment-checklist.md) 和 [docs/quick-deployment-reference.md](docs/quick-deployment-reference.md)。
 
-**Environment Variables Required:**
-- `DATABASE_URL` (from Railway PostgreSQL)
-- `AUTH_SECRET`
-- `AUTH_USERNAME`
-- `AUTH_PASSWORD`
-- `RSSHUB_BASE_URL` (optional)
+## 注意事项
 
-### Option 4: Render
+- **pgvector 维度在建表时固定**，更换 embedding 模型维度需创建新迁移，不能仅改配置。
+- **NVIDIA embedding** 需传 `input_type`：入库用 `passage`，检索用 `query`，缺失会静默降低质量。
+- 图片仅存储 URL 用于展示，不参与向量化。
 
-**Deploy via Blueprint:**
+## 文档
 
-1. Create account at [render.com](https://render.com)
-2. Click "New" → "Blueprint"
-3. Connect your GitHub repository
-4. Render reads `render.yaml` automatically
-5. Configure sensitive environment variables
-6. Deploy web service + worker + database
+- [产品设计](docs/product-design.md)
+- [数据库迁移](docs/database-migration.md)
+- [部署清单](docs/deployment-checklist.md)
+- [部署快速参考](docs/quick-deployment-reference.md)
 
-**Free Tier Limitations:**
-- Web services sleep after 15 minutes of inactivity
-- Consider upgrading to Starter plan ($7/month) for production
+## 社区与更新
 
----
+认同 `真诚`、`友善`、`团结`、`专业`，欢迎加入 [LinuxDo](https://linux.do/latest)。
 
-## 🔧 Environment Variables
+## License
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | ✅ |
-| `AUTH_SECRET` | NextAuth encryption key | ✅ |
-| `AUTH_USERNAME` | Admin username | ✅ |
-| `AUTH_PASSWORD` | Admin password (plain text) | ✅ |
-| `RSSHUB_BASE_URL` | RSSHub instance URL | ❌ (default: rsshub.app) |
-
-**Generate Secrets:**
-
-```bash
-# AUTH_SECRET
-openssl rand -base64 32
-```
-
----
-
-## 📊 Monitoring & Health Checks
-
-**Health Check Endpoint:**
-```
-GET http://your-domain/api/health
-```
-
-Response:
-```json
-{
-  "status": "ok",
-  "timestamp": "2026-06-04T12:00:00.000Z",
-  "service": "rsxonhub"
-}
-```
-
-**Database Management:**
-```bash
-# Open Drizzle Studio (local development)
-npm run db:studio
-
-# Push schema changes
-npm run db:push
-
-# Generate migrations
-npm run db:generate
-```
+MIT
