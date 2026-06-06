@@ -23,15 +23,18 @@ export class FeedFetchHttpError extends Error {
   readonly url: string;
   readonly contentType: string | null;
   readonly responseBodyPreview: string | null;
+  readonly blockedByCloudflare: boolean;
 
   constructor(payload: {
     statusCode: number;
     url: string;
     contentType: string | null;
     responseBodyPreview: string | null;
+    blockedByCloudflare?: boolean;
   }) {
     const details = [
       `Upstream returned HTTP ${payload.statusCode}`,
+      payload.blockedByCloudflare ? "blocked by Cloudflare" : null,
       payload.contentType ? `content-type: ${payload.contentType}` : null,
       payload.responseBodyPreview ? `body: ${payload.responseBodyPreview}` : null,
       `url: ${payload.url}`,
@@ -42,16 +45,25 @@ export class FeedFetchHttpError extends Error {
     this.url = payload.url;
     this.contentType = payload.contentType;
     this.responseBodyPreview = payload.responseBodyPreview;
+    this.blockedByCloudflare = payload.blockedByCloudflare ?? false;
   }
 }
 
-export async function fetchFeedXml(url: string) {
-  return requestFeedXml(url, 0);
+export type FeedFetchOptions = {
+  useProxy?: boolean;
+};
+
+export async function fetchFeedXml(url: string, options: FeedFetchOptions = {}) {
+  return requestFeedXml(url, 0, options);
 }
 
-async function requestFeedXml(url: string, redirectCount: number): Promise<string> {
+async function requestFeedXml(
+  url: string,
+  redirectCount: number,
+  options: FeedFetchOptions,
+): Promise<string> {
   const target = parseHttpUrl(url, "RSS feed URL");
-  const proxy = process.env.RSS_FETCH_PROXY
+  const proxy = options.useProxy !== false && process.env.RSS_FETCH_PROXY
     ? parseProxyUrl(process.env.RSS_FETCH_PROXY)
     : null;
 
@@ -63,7 +75,7 @@ async function requestFeedXml(url: string, redirectCount: number): Promise<strin
     if (redirectCount >= MAX_REDIRECTS) {
       throw new Error("Too many redirects");
     }
-    return requestFeedXml(new URL(headers.location, target).toString(), redirectCount + 1);
+    return requestFeedXml(new URL(headers.location, target).toString(), redirectCount + 1, options);
   }
 
   if (statusCode >= 300) {
@@ -72,6 +84,7 @@ async function requestFeedXml(url: string, redirectCount: number): Promise<strin
       url: target.toString(),
       contentType: headerValue(headers["content-type"]),
       responseBodyPreview: previewResponseBody(body),
+      blockedByCloudflare: isCloudflareBlockedResponse(statusCode, headers, body),
     });
   }
 
@@ -296,6 +309,29 @@ function previewResponseBody(body: string) {
   return collapsed.length > ERROR_BODY_PREVIEW_CHARS
     ? `${collapsed.slice(0, ERROR_BODY_PREVIEW_CHARS)}...`
     : collapsed;
+}
+
+function isCloudflareBlockedResponse(
+  statusCode: number,
+  headers: http.IncomingHttpHeaders,
+  body: string,
+) {
+  if (![403, 429, 503].includes(statusCode)) return false;
+
+  const server = headerValue(headers.server)?.toLowerCase() ?? "";
+  const hasCloudflareHeader =
+    server.includes("cloudflare") ||
+    Boolean(headers["cf-ray"]) ||
+    Boolean(headers["cf-cache-status"]);
+  const bodyText = body.toLowerCase();
+  const hasCloudflareChallenge =
+    bodyText.includes("cloudflare") ||
+    bodyText.includes("just a moment") ||
+    bodyText.includes("cf-chl") ||
+    bodyText.includes("challenge-platform") ||
+    bodyText.includes("turnstile");
+
+  return hasCloudflareHeader || hasCloudflareChallenge;
 }
 
 function timeoutError() {

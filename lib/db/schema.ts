@@ -13,6 +13,7 @@ import {
   vector,
 } from "drizzle-orm/pg-core";
 import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
+import { FEED_FETCH_STRATEGIES } from "@/lib/rss/fetch-strategy";
 
 /**
  * 数据模型,见 docs/product-design.md §5。
@@ -74,6 +75,9 @@ export const feeds = pgTable("feeds", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   url: text("url").notNull().unique(),
   sourceType: text("source_type", { enum: ["rsshub", "http"] }).notNull().default("http"),
+  fetchStrategy: text("fetch_strategy", { enum: FEED_FETCH_STRATEGIES })
+    .default("auto")
+    .notNull(),
   sourceMeta: jsonb("source_meta").$type<Record<string, unknown>>(),
   title: text("title"),
   siteUrl: text("site_url"),

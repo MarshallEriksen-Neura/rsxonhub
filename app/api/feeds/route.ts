@@ -5,20 +5,30 @@ import { db } from "@/lib/db";
 import { articles, feeds, readStates, subscriptions } from "@/lib/db/schema";
 import { logAppError, publicFeedErrorResponse } from "@/lib/errors/app-error-log";
 import { enqueueChangedArticleEmbeddings } from "@/lib/jobs/feed-jobs";
+import { FEED_FETCH_STRATEGIES } from "@/lib/rss/fetch-strategy";
 import { ingestFeed, subscribeFeed } from "@/lib/rss/ingest";
-import { SourceUriError } from "@/lib/rsshub/source-uri";
+import { resolveFeedSource, SourceUriError } from "@/lib/rsshub/source-uri";
+
+const configurableFetchStrategySchema = z
+  .enum(FEED_FETCH_STRATEGIES)
+  .refine((value) => value !== "browser", {
+    message: "浏览器抓取策略尚未接入。",
+  });
 
 const createFeedSchema = z.object({
   sourceUri: z.string().trim().min(1),
   title: z.string().trim().optional(),
   folder: z.string().trim().min(1).optional(),
+  fetchStrategy: configurableFetchStrategySchema.optional(),
 });
 
 const updateFeedSchema = z.object({
   id: z.coerce.number().int().positive(),
+  sourceUri: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1).optional(),
   folder: z.string().trim().min(1).nullable().optional(),
   fetchInterval: z.coerce.number().int().min(60).max(86_400).optional(),
+  fetchStrategy: configurableFetchStrategySchema.optional(),
 });
 
 export async function GET() {
@@ -27,6 +37,8 @@ export async function GET() {
       id: feeds.id,
       title: feeds.title,
       url: feeds.url,
+      sourceType: feeds.sourceType,
+      fetchStrategy: feeds.fetchStrategy,
       folder: subscriptions.folder,
       fetchInterval: feeds.fetchInterval,
       lastFetchedAt: feeds.lastFetchedAt,
@@ -87,7 +99,7 @@ export async function POST(request: Request) {
         folder: parsed.data.folder,
       },
     });
-    return publicFeedErrorResponse("CREATE_FEED_FAILED", 500);
+    return publicFeedErrorResponse("CREATE_FEED_FAILED", 500, error);
   }
 }
 
@@ -100,15 +112,64 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const { id, title, folder, fetchInterval } = parsed.data;
+  const { id, sourceUri, title, folder, fetchInterval, fetchStrategy } = parsed.data;
+  let source: ReturnType<typeof resolveFeedSource> | null = null;
+  if (sourceUri !== undefined) {
+    try {
+      source = resolveFeedSource(sourceUri);
+    } catch (error) {
+      if (error instanceof SourceUriError) {
+        return NextResponse.json(
+          { error: "INVALID_SOURCE_URI", message: error.message },
+          { status: 400 },
+        );
+      }
+      throw error;
+    }
+  }
+  if (fetchStrategy === "rsshub") {
+    const sourceType =
+      source?.type ??
+      (
+        await db
+          .select({ sourceType: feeds.sourceType })
+          .from(feeds)
+          .where(eq(feeds.id, id))
+          .limit(1)
+      )[0]?.sourceType;
+
+    if (sourceType !== "rsshub") {
+      return NextResponse.json(
+        {
+          error: "INVALID_FETCH_STRATEGY",
+          message: "RSSHub 抓取策略需要把订阅源地址改为 rsshub:// URI。",
+        },
+        { status: 400 },
+      );
+    }
+  }
 
   await db.transaction(async (tx) => {
-    if (title !== undefined || fetchInterval !== undefined) {
+    if (
+      title !== undefined ||
+      fetchInterval !== undefined ||
+      fetchStrategy !== undefined ||
+      source !== null
+    ) {
       await tx
         .update(feeds)
         .set({
+          ...(source !== null
+            ? {
+                url: source.canonicalUri,
+                sourceType: source.type,
+                sourceMeta: source.type === "rsshub" ? { rsshubRoute: source.route } : null,
+                lastError: null,
+              }
+            : {}),
           ...(title !== undefined ? { title } : {}),
           ...(fetchInterval !== undefined ? { fetchInterval } : {}),
+          ...(fetchStrategy !== undefined ? { fetchStrategy } : {}),
         })
         .where(eq(feeds.id, id));
     }

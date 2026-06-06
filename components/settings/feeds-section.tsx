@@ -5,19 +5,28 @@ import { Check, Loader2, Pencil, Plus, RefreshCw, Rss, Trash2, X } from "lucide-
 import { Button } from "@/components/retroui/Button";
 import { Empty } from "@/components/retroui/Empty";
 import { Input } from "@/components/retroui/Input";
+import { Select } from "@/components/retroui/Select";
 import { AddFeedDialog } from "@/components/feed/add-feed-dialog";
+import {
+  feedFetchStrategyLabel,
+  normalizeFeedFetchStrategy,
+  type FeedFetchStrategy,
+} from "@/lib/rss/fetch-strategy";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "./section-header";
+
+const EDITABLE_FETCH_STRATEGIES: FeedFetchStrategy[] = ["auto", "direct", "rsshub"];
 
 type ApiFeed = {
   id: number;
   title: string | null;
   url: string;
+  sourceType: "rsshub" | "http";
+  fetchStrategy: FeedFetchStrategy;
   folder: string | null;
   fetchInterval: number;
   lastFetchedAt: string | null;
   lastSuccessfulFetchedAt: string | null;
-  lastError: string | null;
   unread: number | string | null;
 };
 
@@ -33,11 +42,9 @@ export function FeedsSection() {
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const refreshFeeds = useCallback(async () => {
     setLoading(true);
-    setError(null);
 
     try {
       const response = await fetch("/api/feeds", { cache: "no-store" });
@@ -47,8 +54,8 @@ export function FeedsSection() {
       }
 
       setFeeds((payload.feeds ?? []).map(normalizeFeed));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch {
+      // Keep the feed panel quiet; backend/network failures should not render raw exception text here.
     } finally {
       setLoading(false);
     }
@@ -63,7 +70,13 @@ export function FeedsSection() {
 
   async function updateFeed(
     id: number,
-    input: { title: string; folder: string | null; fetchInterval: number },
+    input: {
+      sourceUri: string;
+      title: string;
+      folder: string | null;
+      fetchInterval: number;
+      fetchStrategy: FeedFetchStrategy;
+    },
   ) {
     const response = await fetch("/api/feeds", {
       method: "PATCH",
@@ -110,12 +123,6 @@ export function FeedsSection() {
           </div>
         }
       />
-
-      {error ? (
-        <div className="mb-4 border border-destructive/30 bg-destructive/5 px-4 py-3 text-body-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
 
       {loading && feeds.length === 0 ? (
         <div className="flex items-center gap-2 border border-hairline bg-surface-soft px-4 py-5 text-body-sm text-steel">
@@ -186,14 +193,24 @@ function FeedRow({
   folders: string[];
   onUpdate: (
     id: number,
-    input: { title: string; folder: string | null; fetchInterval: number },
+    input: {
+      sourceUri: string;
+      title: string;
+      folder: string | null;
+      fetchInterval: number;
+      fetchStrategy: FeedFetchStrategy;
+    },
   ) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [draftTitle, setDraftTitle] = useState(feed.title ?? feed.url);
+  const [draftSourceUri, setDraftSourceUri] = useState(feed.url);
   const [draftFolder, setDraftFolder] = useState(feed.folder ?? "");
+  const [draftFetchStrategy, setDraftFetchStrategy] = useState<FeedFetchStrategy>(
+    normalizeFeedFetchStrategy(feed.fetchStrategy),
+  );
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(String(Math.round(feed.fetchInterval / 60)));
   const [pending, setPending] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -206,9 +223,11 @@ function FeedRow({
     setRowError(null);
     try {
       await onUpdate(feed.id, {
+        sourceUri: draftSourceUri.trim(),
         title,
         folder: draftFolder.trim() || null,
         fetchInterval: Math.max(1, Number(draftIntervalMinutes) || 60) * 60,
+        fetchStrategy: draftFetchStrategy,
       });
       setEditing(false);
     } catch (err) {
@@ -220,7 +239,9 @@ function FeedRow({
 
   function cancel() {
     setDraftTitle(feed.title ?? feed.url);
+    setDraftSourceUri(feed.url);
     setDraftFolder(feed.folder ?? "");
+    setDraftFetchStrategy(normalizeFeedFetchStrategy(feed.fetchStrategy));
     setDraftIntervalMinutes(String(Math.round(feed.fetchInterval / 60)));
     setRowError(null);
     setEditing(false);
@@ -240,7 +261,7 @@ function FeedRow({
   if (editing) {
     return (
       <li className="flex flex-col gap-3 py-3.5">
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_10rem]">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_11rem_10rem]">
           <label className="flex flex-col gap-1.5">
             <span className="text-micro font-medium text-steel">名称</span>
             <Input
@@ -248,6 +269,15 @@ function FeedRow({
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
               aria-invalid={!draftTitle.trim() || undefined}
+              disabled={pending}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-micro font-medium text-steel">源地址</span>
+            <Input
+              value={draftSourceUri}
+              onChange={(e) => setDraftSourceUri(e.target.value)}
+              aria-invalid={!draftSourceUri.trim() || undefined}
               disabled={pending}
             />
           </label>
@@ -268,6 +298,27 @@ function FeedRow({
             </datalist>
           </label>
           <label className="flex flex-col gap-1.5">
+            <span className="text-micro font-medium text-steel">抓取策略</span>
+            <Select
+              value={draftFetchStrategy}
+              onValueChange={(value) =>
+                setDraftFetchStrategy(normalizeFeedFetchStrategy(value))
+              }
+              disabled={pending}
+            >
+              <Select.Trigger className="h-9 min-w-0 bg-surface px-3 shadow-none">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content align="start">
+                {EDITABLE_FETCH_STRATEGIES.map((strategy) => (
+                  <Select.Item key={strategy} value={strategy}>
+                    {feedFetchStrategyLabel(strategy)}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select>
+          </label>
+          <label className="flex flex-col gap-1.5">
             <span className="text-micro font-medium text-steel">抓取间隔(分钟)</span>
             <Input
               type="number"
@@ -284,7 +335,7 @@ function FeedRow({
           <Button
             size="sm"
             onClick={() => void commit()}
-            disabled={!draftTitle.trim() || pending}
+            disabled={!draftTitle.trim() || !draftSourceUri.trim() || pending}
             className="gap-1.5"
           >
             {pending ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Check size={14} aria-hidden />}
@@ -311,11 +362,8 @@ function FeedRow({
           <span className="truncate text-body-sm text-ink">{feed.title ?? feed.url}</span>
           <span className="truncate text-micro text-steel">{feed.url}</span>
           <span className="text-micro text-steel">
-            {feed.unread > 0 ? `${feed.unread} 条未读` : "已读完"} · 每 {formatInterval(feed.fetchInterval)} 抓取 · {formatFetchStatus(feed)}
+            {feed.unread > 0 ? `${feed.unread} 条未读` : "已读完"} · {feedFetchStrategyLabel(feed.fetchStrategy)} · 每 {formatInterval(feed.fetchInterval)} 抓取 · {formatFetchStatus(feed)}
           </span>
-          {feed.lastError ? (
-            <span className="truncate text-micro text-destructive">最近错误: {feed.lastError}</span>
-          ) : null}
         </div>
 
         {confirming ? (
@@ -343,7 +391,9 @@ function FeedRow({
               title="编辑"
               onClick={() => {
                 setDraftTitle(feed.title ?? feed.url);
+                setDraftSourceUri(feed.url);
                 setDraftFolder(feed.folder ?? "");
+                setDraftFetchStrategy(normalizeFeedFetchStrategy(feed.fetchStrategy));
                 setDraftIntervalMinutes(String(Math.round(feed.fetchInterval / 60)));
                 setRowError(null);
                 setEditing(true);
@@ -372,6 +422,7 @@ function FeedRow({
 function normalizeFeed(feed: ApiFeed): Feed {
   return {
     ...feed,
+    fetchStrategy: normalizeFeedFetchStrategy(feed.fetchStrategy),
     unread: Number(feed.unread ?? 0),
   };
 }

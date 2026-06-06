@@ -4,6 +4,8 @@ import { FeedFetchHttpError } from "@/lib/rss/fetch";
 
 export const GENERIC_FEED_ERROR_MESSAGE =
   "订阅源暂时无法访问，请稍后重试。详细错误已记录。";
+export const CLOUDFLARE_FEED_ERROR_MESSAGE =
+  "订阅源被 Cloudflare 防护拦截。请改用 RSSHub、稳定代理或后续浏览器抓取策略。";
 
 export async function logAppError(input: {
   source: string;
@@ -41,14 +43,24 @@ export async function logAppError(input: {
   }
 }
 
-export function publicFeedErrorResponse(error: string, status = 500) {
+export function publicFeedErrorResponse(error: string, status = 500, cause?: unknown) {
   return Response.json(
     {
       error,
-      message: GENERIC_FEED_ERROR_MESSAGE,
+      message: publicFeedErrorMessage(cause),
     },
     { status },
   );
+}
+
+export function publicFeedErrorMessage(error: unknown) {
+  return isCloudflareFeedError(error)
+    ? CLOUDFLARE_FEED_ERROR_MESSAGE
+    : GENERIC_FEED_ERROR_MESSAGE;
+}
+
+export function isCloudflareFeedError(error: unknown) {
+  return error instanceof FeedFetchHttpError && error.blockedByCloudflare;
 }
 
 export function upstreamDetails(error: unknown): Record<string, unknown> {
@@ -59,6 +71,7 @@ export function upstreamDetails(error: unknown): Record<string, unknown> {
       url: error.url,
       contentType: error.contentType,
       responseBodyPreview: error.responseBodyPreview,
+      blockedByCloudflare: error.blockedByCloudflare,
     },
   };
 }

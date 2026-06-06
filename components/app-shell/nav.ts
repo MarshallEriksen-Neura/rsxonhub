@@ -1,5 +1,6 @@
 import {
   CircleAlert,
+  BarChart2,
   ListChecks,
   MessagesSquare,
   Rss,
@@ -22,6 +23,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/feed", label: "订阅", icon: Rss },
   { href: "/digest", label: "每日精选", icon: Sparkles },
   { href: "/chat", label: "AI 问答", icon: MessagesSquare },
+  { href: "/stats", label: "订阅统计", icon: BarChart2 },
   { href: "/jobs", label: "队列状态", icon: ListChecks },
   { href: "/logs", label: "错误日志", icon: CircleAlert },
   { href: "/settings", label: "设置", icon: Settings },

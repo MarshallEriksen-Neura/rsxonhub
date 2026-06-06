@@ -3,6 +3,7 @@ import {
   feedRequestHeaders,
   FEED_REQUEST_TIMEOUT_MS,
   fetchFeedXml,
+  type FeedFetchOptions,
 } from "@/lib/rss/fetch";
 
 export type ParsedFeed = Parser.Output<Record<string, unknown>>;
@@ -20,6 +21,6 @@ export const rssParser = new Parser<Record<string, unknown>, Record<string, unkn
   },
 });
 
-export async function parseFeedUrl(url: string) {
-  return rssParser.parseString(await fetchFeedXml(url));
+export async function parseFeedUrl(url: string, options?: FeedFetchOptions) {
+  return rssParser.parseString(await fetchFeedXml(url, options));
 }

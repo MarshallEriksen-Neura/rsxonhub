@@ -7,15 +7,20 @@ import {
   readStates,
   subscriptions,
 } from "@/lib/db/schema";
-import { GENERIC_FEED_ERROR_MESSAGE, logAppError } from "@/lib/errors/app-error-log";
+import { logAppError, publicFeedErrorMessage } from "@/lib/errors/app-error-log";
+import {
+  normalizeFeedFetchStrategy,
+  type FeedFetchStrategy,
+} from "@/lib/rss/fetch-strategy";
 import { parseFeedUrl } from "@/lib/rss/parser";
 import { normalizeFeed, normalizeItems, type NormalizedArticle } from "@/lib/rss/normalize";
-import { resolveFeedSource } from "@/lib/rsshub/source-uri";
+import { resolveFeedSource, SourceUriError, type FeedSource } from "@/lib/rsshub/source-uri";
 
 export type SubscribeFeedInput = {
   sourceUri: string;
   title?: string;
   folder?: string;
+  fetchStrategy?: FeedFetchStrategy;
 };
 
 export type IngestFeedResult = {
@@ -27,8 +32,9 @@ export type IngestFeedResult = {
 };
 
 export async function subscribeFeed(input: SubscribeFeedInput) {
-  const source = resolveFeedSource(input.sourceUri);
-  const parsed = await parseFeedUrl(source.fetchUrl);
+  const fetchStrategy = normalizeFeedFetchStrategy(input.fetchStrategy);
+  const source = resolveSourceForStrategy(input.sourceUri, fetchStrategy);
+  const parsed = await parseFeedUrl(source.fetchUrl, fetchOptionsForStrategy(fetchStrategy));
   const normalized = normalizeFeed(parsed, source);
 
   const [feed] = await db
@@ -36,6 +42,7 @@ export async function subscribeFeed(input: SubscribeFeedInput) {
     .values({
       url: source.canonicalUri,
       sourceType: source.type,
+      fetchStrategy,
       sourceMeta: normalized.sourceMeta,
       title: input.title?.trim() || normalized.title,
       siteUrl: normalized.siteUrl,
@@ -44,6 +51,7 @@ export async function subscribeFeed(input: SubscribeFeedInput) {
       target: feeds.url,
       set: {
         sourceType: source.type,
+        fetchStrategy,
         sourceMeta: normalized.sourceMeta,
         title: input.title?.trim() || normalized.title,
         siteUrl: normalized.siteUrl,
@@ -68,14 +76,15 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
     throw new Error(`Feed not found: ${feedId}`);
   }
 
-  const source = resolveFeedSource(feed.url);
+  const fetchStrategy = normalizeFeedFetchStrategy(feed.fetchStrategy);
+  const source = resolveSourceForStrategy(feed.url, fetchStrategy);
   const [run] = await db
     .insert(feedFetchRuns)
     .values({ feedId, status: "running" })
     .returning();
 
   try {
-    const parsed = await parseFeedUrl(source.fetchUrl);
+    const parsed = await parseFeedUrl(source.fetchUrl, fetchOptionsForStrategy(fetchStrategy));
     const normalizedFeed = normalizeFeed(parsed, source);
     const normalizedItems = normalizeItems(feedId, parsed.items ?? [], source);
     const result = await upsertArticles(feedId, normalizedItems);
@@ -84,6 +93,7 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
       .update(feeds)
       .set({
         sourceType: source.type,
+        fetchStrategy,
         sourceMeta: normalizedFeed.sourceMeta,
         title: feed.title ?? normalizedFeed.title,
         siteUrl: normalizedFeed.siteUrl ?? feed.siteUrl,
@@ -126,7 +136,7 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
       .update(feeds)
       .set({
         lastFetchedAt: sql`now()`,
-        lastError: GENERIC_FEED_ERROR_MESSAGE,
+        lastError: publicFeedErrorMessage(error),
       })
       .where(eq(feeds.id, feedId));
 
@@ -135,12 +145,31 @@ export async function ingestFeed(feedId: number): Promise<IngestFeedResult> {
       .set({
         status: "failed",
         finishedAt: sql`now()`,
-        error: GENERIC_FEED_ERROR_MESSAGE,
+        error: publicFeedErrorMessage(error),
       })
       .where(eq(feedFetchRuns.id, run.id));
 
     throw error;
   }
+}
+
+function resolveSourceForStrategy(url: string, strategy: FeedFetchStrategy): FeedSource {
+  if (strategy === "browser") {
+    throw new SourceUriError("浏览器抓取策略尚未接入。请先改用 RSSHub 或代理策略。");
+  }
+
+  const source = resolveFeedSource(url);
+  if (strategy === "rsshub" && source.type !== "rsshub") {
+    throw new SourceUriError("RSSHub 抓取策略需要把订阅源地址改为 rsshub:// URI。");
+  }
+
+  return source;
+}
+
+function fetchOptionsForStrategy(strategy: FeedFetchStrategy) {
+  return {
+    useProxy: strategy !== "direct",
+  };
 }
 
 async function upsertArticles(feedId: number, items: NormalizedArticle[]) {

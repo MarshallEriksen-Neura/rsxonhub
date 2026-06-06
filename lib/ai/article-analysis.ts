@@ -1,7 +1,7 @@
-import { generateObject } from "ai";
 import { eq, sql } from "drizzle-orm";
-import { z } from "zod";
-import { chatModel, withAIRequestRetry } from "@/lib/ai";
+import { withAIRequestRetry } from "@/lib/ai";
+import { generateChatJsonText } from "@/lib/ai/chat-json";
+import { parseArticleAnalysisText } from "@/lib/ai/article-analysis-parser";
 import { getChatConfig } from "@/lib/ai/config";
 import { db } from "@/lib/db";
 import {
@@ -15,14 +15,7 @@ import {
 export const ARTICLE_SUMMARY_PROMPT_VERSION = "article-summary-v1";
 const DEFAULT_ARTICLE_ANALYSIS_TIMEOUT_MS = 75_000;
 
-const articleAnalysisSchema = z.object({
-  summary: z.string().min(1).max(800),
-  bullets: z.array(z.string().min(1).max(240)).max(5),
-  tags: z.array(z.string().min(1).max(40)).max(6),
-  importance: z.number().int().min(0).max(100),
-});
-
-export type AnalyzeArticleResult = z.infer<typeof articleAnalysisSchema>;
+export type { AnalyzeArticleResult } from "@/lib/ai/article-analysis-parser";
 
 export async function analyzeArticle(articleId: number) {
   const [article] = await db
@@ -81,26 +74,21 @@ export async function analyzeArticle(articleId: number) {
   });
 
   try {
-    const model = await chatModel();
     const result = await withArticleAnalysisTimeout(
       withAIRequestRetry(() =>
-        generateObject({
-          model,
-          schema: articleAnalysisSchema,
+        generateChatJsonText({
+          config,
           temperature: 0.7,
           topP: 1,
-          system:
-            "你是单用户 RSS 阅读器的文章分析器。只基于给定文章证据输出摘要、要点、标签和重要度；不要引入外部事实。",
+          maxOutputTokens: 1024,
+          system: ARTICLE_ANALYSIS_SYSTEM,
           prompt: buildPrompt(article),
         }),
       ),
     );
 
-    const analysis = result.object;
-    const usage = result.usage;
-    const tokenCost = usage
-      ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
-      : null;
+    const analysis = parseArticleAnalysisText(result.text);
+    const tokenCost = result.tokenCost;
 
     await upsertSummaryStatus(articleId, {
       ...analysis,
@@ -183,6 +171,16 @@ function buildPrompt(article: {
 function compactText(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, 8_000);
 }
+
+const ARTICLE_ANALYSIS_SYSTEM = `你是单用户 RSS 阅读器的文章分析器。只基于给定文章证据输出摘要、要点、标签和重要度；不要引入外部事实。
+
+必须只输出一个 JSON object,不要输出 Markdown、代码块或解释文字。JSON schema:
+{
+  "summary": "1 到 800 字的中文摘要",
+  "bullets": ["最多 5 条要点,每条 1 到 240 字"],
+  "tags": ["最多 6 个标签,每个 1 到 40 字"],
+  "importance": 0 到 100 的整数
+}`;
 
 function withArticleAnalysisTimeout<T>(promise: Promise<T>) {
   const timeoutMs = articleAnalysisTimeoutMs();

@@ -52,6 +52,6 @@ export async function POST(request: Request) {
         sourceUri: parsed.data.sourceUri,
       },
     });
-    return publicFeedErrorResponse("PREVIEW_FEED_FAILED", 502);
+    return publicFeedErrorResponse("PREVIEW_FEED_FAILED", 502, error);
   }
 }
