@@ -36,15 +36,8 @@ const getArticleContentSchema = z.object({
   articleId: z.number().int().describe("文章 ID"),
 });
 
-type ChatToolEvent = {
-  tool: string;
-  input?: Record<string, unknown>;
-  resultCount?: number;
-};
-
 type CreateChatToolsOptions = {
   onCitation?: (article: CitedArticle) => void;
-  onToolEvent?: (event: ChatToolEvent) => void;
 };
 
 function normalizeLimit(limit: number, max: number) {
@@ -64,10 +57,6 @@ export function createSearchArticlesTool(options: CreateChatToolsOptions = {}) {
   execute: async ({ query, limit }) => {
     const normalizedQuery = query.trim();
     const safeLimit = normalizeLimit(limit, 12);
-    options.onToolEvent?.({
-      tool: "searchArticles",
-      input: { query: normalizedQuery, limit: safeLimit },
-    });
 
     if (!normalizedQuery) {
       return { results: [], warning: "搜索文本为空，未执行向量检索。" };
@@ -105,8 +94,6 @@ export function createSearchArticlesTool(options: CreateChatToolsOptions = {}) {
       };
     });
 
-    options.onToolEvent?.({ tool: "searchArticles", resultCount: results.length });
-
     return {
       results,
     };
@@ -123,10 +110,6 @@ export function createFindArticlesByKeywordTool(options: CreateChatToolsOptions 
   execute: async ({ keyword, limit }) => {
     const normalizedKeyword = keyword.trim();
     const safeLimit = normalizeLimit(limit, 20);
-    options.onToolEvent?.({
-      tool: "findArticlesByKeyword",
-      input: { keyword: normalizedKeyword, limit: safeLimit },
-    });
 
     if (!normalizedKeyword) {
       return { articles: [], warning: "关键词为空，未执行数据库搜索。" };
@@ -154,10 +137,6 @@ export function createFindArticlesByKeywordTool(options: CreateChatToolsOptions 
     for (const row of rows) {
       cite(options, { id: row.id, title: row.title, url: row.url });
     }
-    options.onToolEvent?.({
-      tool: "findArticlesByKeyword",
-      resultCount: rows.length,
-    });
 
     return {
       articles: rows.map((r) => ({
@@ -197,7 +176,6 @@ export function createGetArticleContentTool(options: CreateChatToolsOptions = {}
 
     if (!row) return { error: `文章 ${articleId} 不存在` };
     cite(options, { id: row.id, title: row.title, url: row.url });
-    options.onToolEvent?.({ tool: "getArticleContent", resultCount: 1 });
 
     return {
       ...row,
@@ -224,7 +202,6 @@ export function createListFeedsTool(options: CreateChatToolsOptions = {}) {
       .from(feeds)
       .leftJoin(subscriptions, eq(subscriptions.feedId, feeds.id))
       .orderBy(subscriptions.folder, feeds.title);
-    options.onToolEvent?.({ tool: "listFeeds", resultCount: rows.length });
     return { feeds: rows };
   },
 });
@@ -262,7 +239,6 @@ export function createGetLatestDigestTool(options: CreateChatToolsOptions = {}) 
         url: item.articleUrl,
       });
     }
-    options.onToolEvent?.({ tool: "getLatestDigest", resultCount: items.length });
 
     return {
       digest: { date: digest.digestDate, title: digest.title, summary: digest.summary, items },

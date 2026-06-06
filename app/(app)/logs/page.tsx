@@ -2,7 +2,13 @@ import { desc, eq, sql } from "drizzle-orm";
 import { AlertTriangle, Clock, Database, Rss } from "lucide-react";
 import { Badge } from "@/components/retroui/Badge";
 import { Empty } from "@/components/retroui/Empty";
-import { Table } from "@/components/retroui/Table";
+import {
+  ConsoleHeader,
+  ConsolePanel,
+  CountChip,
+  MetricCard,
+  type ConsoleTone,
+} from "@/components/console/console-kit";
 import { db } from "@/lib/db";
 import { appErrorLogs, digestItems, digestRuns, digests, feeds } from "@/lib/db/schema";
 import { getScheduleLocalDate } from "@/lib/datetime";
@@ -20,57 +26,79 @@ export default async function LogsPage() {
     getDigestRunSummary(),
   ]);
 
+  const digestTone: ConsoleTone =
+    digestStatus.latestRun?.status === "failed"
+      ? "danger"
+      : digestStatus.latestRun?.status === "skipped"
+        ? "warning"
+        : digestStatus.latestRun
+          ? "live"
+          : "neutral";
+
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-background">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-5 lg:px-7 lg:py-6">
-        <section className="grid gap-3 sm:grid-cols-4">
-          <StatTile
+    <main className="min-h-0 flex-1 overflow-y-auto bg-canvas">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6 lg:py-6">
+        <ConsoleHeader
+          kicker="SYSTEM · 错误监控"
+          title="错误日志"
+          subtitle={`服务端抓取与 API 失败的完整上游记录。前端仅展示通用提示,详情留存于此。保留最近 ${RECENT_LOG_LIMIT} 条。`}
+          status={{
+            tone: stats.lastDay > 0 ? "warning" : "live",
+            label: stats.lastDay > 0 ? `24H · ${stats.lastDay}` : "稳定",
+            pulse: stats.lastDay > 0,
+          }}
+        />
+
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
             icon={Database}
             label="总日志"
-            value={stats.total}
+            value={stats.total.toLocaleString("zh-CN")}
             tone="neutral"
+            delay={0}
           />
-          <StatTile
+          <MetricCard
             icon={Clock}
             label="24 小时内"
-            value={stats.lastDay}
-            tone={stats.lastDay > 0 ? "warning" : "neutral"}
+            value={stats.lastDay.toLocaleString("zh-CN")}
+            tone={stats.lastDay > 0 ? "warning" : "live"}
+            hint={stats.lastDay > 0 ? "近期有新增错误" : "近 24H 无新增"}
+            delay={60}
           />
-          <StatTile
+          <MetricCard
             icon={Rss}
             label="订阅源错误"
-            value={stats.rss}
-            tone={stats.rss > 0 ? "danger" : "neutral"}
+            value={stats.rss.toLocaleString("zh-CN")}
+            tone={stats.rss > 0 ? "danger" : "live"}
+            delay={120}
           />
-          <StatTile
+          <MetricCard
             icon={Clock}
             label="今日精选运行"
-            value={digestStatus.latestRun ? 1 : 0}
-            tone={
-              digestStatus.latestRun?.status === "failed"
-                ? "danger"
-                : digestStatus.latestRun?.status === "skipped"
-                  ? "warning"
-                  : "neutral"
-            }
+            value={digestStatus.latestRun ? "1" : "0"}
+            tone={digestTone}
+            hint={digestStatus.latestRun?.status ?? "暂无运行"}
+            delay={180}
           />
         </section>
 
-        <section className="flex flex-col gap-3 border border-hairline bg-surface-soft p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-col gap-1">
-              <h2 className="text-body-md-medium text-ink">每日精选运行状态</h2>
-              <p className="text-body-sm text-steel">
-                {digestStatus.digestDate} · 下次触发 {env.DIGEST_GENERATE_AT} {env.DIGEST_TIMEZONE}
-              </p>
-            </div>
+        <ConsolePanel
+          label="每日精选运行状态"
+          badge={
             <Badge variant="outline" size="sm">
               {digestStatus.latestRun
                 ? `${digestStatus.latestRun.phase} / ${digestStatus.latestRun.status}`
                 : "暂无运行"}
             </Badge>
-          </div>
-          <div className="grid gap-3 text-body-sm text-charcoal sm:grid-cols-4">
+          }
+          action={
+            <span className="font-mono text-micro text-stone">
+              {digestStatus.digestDate} · 下次 {env.DIGEST_GENERATE_AT} {env.DIGEST_TIMEZONE}
+            </span>
+          }
+          bodyClassName="flex flex-col gap-3"
+        >
+          <div className="grid gap-px overflow-hidden border border-hairline bg-hairline sm:grid-cols-4">
             <StatusCell
               label="最近完成"
               value={
@@ -79,33 +107,25 @@ export default async function LogsPage() {
                   : "暂无"
               }
             />
-            <StatusCell label="入选文章" value={digestStatus.selectedCount} />
+            <StatusCell label="入选文章" value={digestStatus.selectedCount} mono />
             <StatusCell label="模型" value={digestStatus.digest?.model ?? "暂无"} />
-            <StatusCell label="Tokens" value={digestStatus.digest?.tokenCost ?? 0} />
+            <StatusCell label="Tokens" value={digestStatus.digest?.tokenCost ?? 0} mono />
           </div>
           {digestStatus.latestRun?.error ? (
-            <p className="break-words border-l-2 border-destructive/50 bg-destructive/5 px-3 py-2 text-body-sm text-destructive">
+            <p className="break-words border-l-[3px] border-destructive bg-destructive/5 px-3 py-2 font-mono text-body-sm text-destructive">
               {digestStatus.latestRun.error}
             </p>
           ) : null}
-        </section>
+        </ConsolePanel>
 
-        <section className="flex flex-col gap-3">
-          <div className="flex items-end justify-between gap-3 border-b border-hairline pb-3">
-            <div className="flex min-w-0 flex-col gap-1">
-              <h1 className="text-heading-4 font-semibold text-ink">错误日志</h1>
-              <p className="text-body-sm text-steel">
-                最近 {RECENT_LOG_LIMIT} 条服务端错误。前端只展示通用提示,完整上游响应保存在这里。
-              </p>
-            </div>
-            <Badge variant="default" size="sm" className="shrink-0">
-              {logs.length} 条
-            </Badge>
-          </div>
-
+        <ConsolePanel
+          label="错误流"
+          badge={<CountChip tone={logs.length > 0 ? "danger" : "live"}>{logs.length}</CountChip>}
+          bodyClassName={logs.length === 0 ? "p-4" : "p-0"}
+        >
           {logs.length === 0 ? (
             <Empty className="gap-4 border border-dashed border-hairline bg-surface-soft py-12 shadow-none hover:shadow-none">
-              <Empty.Icon className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/8 text-primary">
+              <Empty.Icon className="flex h-11 w-11 items-center justify-center rounded-full bg-semantic-success/10 text-semantic-success">
                 <AlertTriangle size={20} aria-hidden />
               </Empty.Icon>
               <div className="flex flex-col gap-1">
@@ -116,22 +136,13 @@ export default async function LogsPage() {
               </div>
             </Empty>
           ) : (
-            <Table className="border-hairline bg-card shadow-none">
-              <Table.Header>
-                <Table.Row>
-                  <Table.Head className="w-32">时间</Table.Head>
-                  <Table.Head>错误</Table.Head>
-                  <Table.Head className="w-28 text-right">来源</Table.Head>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {logs.map((log) => (
-                  <ErrorLogItem key={log.id} log={log} />
-                ))}
-              </Table.Body>
-            </Table>
+            <ul className="divide-y divide-hairline">
+              {logs.map((log) => (
+                <ErrorLogItem key={log.id} log={log} />
+              ))}
+            </ul>
           )}
-        </section>
+        </ConsolePanel>
       </div>
     </main>
   );
@@ -211,117 +222,110 @@ async function getDigestRunSummary() {
 function ErrorLogItem({ log }: { log: ErrorLogRow }) {
   const upstream = upstreamSummary(log.details);
   const details = JSON.stringify(log.details ?? {}, null, 2);
+  const isError = log.severity === "error";
 
   return (
-    <Table.Row>
-      <Table.Cell className="w-32 align-top">
+    <li
+      className={cn(
+        "group relative flex gap-4 px-4 py-3.5 transition-colors hover:bg-surface-soft",
+      )}
+    >
+      {/* severity spine */}
+      <span
+        className={cn(
+          "absolute inset-y-0 left-0 w-[3px]",
+          isError ? "bg-destructive" : "bg-brand-orange",
+        )}
+        aria-hidden
+      />
+
+      {/* timestamp rail */}
       <time
         dateTime={log.createdAt.toISOString()}
-        className="text-micro text-steel"
+        className="w-16 shrink-0 pt-0.5 font-mono text-micro leading-relaxed text-steel"
       >
         {formatDate(log.createdAt)}
       </time>
-      </Table.Cell>
 
-      <Table.Cell className="min-w-[32rem] align-top">
-      <div className="flex min-w-0 flex-col gap-2">
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Badge
-            variant={log.severity === "error" ? "solid" : "default"}
+            variant={isError ? "solid" : "default"}
             size="sm"
-            className={cn(log.severity === "error" && "bg-destructive text-white")}
+            className={cn(
+              "font-mono uppercase tracking-wider",
+              isError && "bg-destructive text-white",
+              !isError && "bg-brand-orange/12 text-brand-orange-deep dark:text-brand-orange",
+            )}
           >
             {log.severity}
           </Badge>
           {log.errorName ? (
-            <span className="text-micro font-medium text-steel">{log.errorName}</span>
+            <span className="font-mono text-micro font-medium text-charcoal">{log.errorName}</span>
           ) : null}
-          <span className="text-micro text-stone">{log.operation}</span>
+          <span className="font-mono text-micro text-stone">{log.operation}</span>
+          <span className="ml-auto inline-flex items-center rounded-full border border-hairline bg-surface px-2 py-0.5 font-mono text-micro uppercase tracking-wider text-steel">
+            {log.source}
+          </span>
         </div>
 
         <p className="break-words text-body-sm text-ink">{log.message}</p>
 
         {upstream ? (
-          <div className="flex flex-col gap-1 border-l-2 border-destructive/40 bg-destructive/5 px-3 py-2 text-micro text-charcoal">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-l-[3px] border-destructive/40 bg-destructive/5 px-3 py-2 font-mono text-micro text-charcoal">
             <span className="font-semibold text-destructive">
-              Upstream {upstream.statusCode ?? "unknown"}
+              ↑ {upstream.statusCode ?? "unknown"}
             </span>
-            {upstream.url ? <span className="break-all">{upstream.url}</span> : null}
-            {upstream.contentType ? <span>{upstream.contentType}</span> : null}
+            {upstream.url ? <span className="break-all text-steel">{upstream.url}</span> : null}
+            {upstream.contentType ? <span className="text-stone">{upstream.contentType}</span> : null}
           </div>
         ) : null}
 
         {log.feedTitle || log.feedUrl ? (
           <p className="truncate text-micro text-steel">
-            订阅源: {log.feedTitle ?? log.feedUrl}
+            <span className="text-stone">订阅源 · </span>
+            {log.feedTitle ?? log.feedUrl}
           </p>
         ) : null}
 
         {details !== "{}" ? (
-          <details className="group">
-            <summary className="cursor-pointer text-micro font-medium text-primary hover:underline">
-              查看 details JSON
+          <details className="group/details">
+            <summary className="inline-flex cursor-pointer items-center gap-1 font-mono text-micro font-medium text-primary hover:underline">
+              <span className="transition-transform group-open/details:rotate-90">▸</span>
+              details.json
             </summary>
-            <pre className="mt-2 max-h-72 overflow-auto border border-hairline bg-surface-soft p-3 text-micro leading-relaxed text-charcoal">
+            <pre className="console-scanline mt-2 max-h-72 overflow-auto border border-hairline bg-surface-soft p-3 font-mono text-micro leading-relaxed text-charcoal">
               {details}
             </pre>
           </details>
         ) : null}
       </div>
-      </Table.Cell>
-
-      <Table.Cell className="w-28 align-top">
-      <div className="flex justify-end">
-        <Badge variant="outline" size="sm" className="h-fit">
-          {log.source}
-        </Badge>
-      </div>
-      </Table.Cell>
-    </Table.Row>
+    </li>
   );
 }
 
-function StatTile({
-  icon: Icon,
+function StatusCell({
   label,
   value,
-  tone,
+  mono = false,
 }: {
-  icon: typeof Database;
   label: string;
-  value: number;
-  tone: "neutral" | "warning" | "danger";
+  value: string | number;
+  mono?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex items-center justify-between border border-hairline bg-card px-4 py-3",
-        tone === "warning" && "border-amber-300/60 bg-amber-50",
-        tone === "danger" && "border-destructive/30 bg-destructive/5",
-      )}
-    >
-      <div className="flex flex-col">
-        <span className="text-micro font-medium text-steel">{label}</span>
-        <span className="text-heading-4 font-semibold text-ink">{value}</span>
-      </div>
-      <Icon
-        size={20}
-        aria-hidden
+    <div className="flex min-w-0 flex-col gap-1 bg-card px-3 py-2.5">
+      <span className="text-micro font-semibold uppercase tracking-[0.1em] text-steel">
+        {label}
+      </span>
+      <span
         className={cn(
-          "text-stone",
-          tone === "warning" && "text-amber-600",
-          tone === "danger" && "text-destructive",
+          "break-words text-body-sm-medium text-ink",
+          mono && "font-mono tabular-nums",
         )}
-      />
-    </div>
-  );
-}
-
-function StatusCell({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-micro font-medium text-steel">{label}</span>
-      <span className="break-words text-body-sm-medium text-ink">{value}</span>
+      >
+        {value}
+      </span>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Pencil, Plus, RefreshCw, Rss, Trash2, X } from "lucide-react";
+import { Check, Download, Loader2, Pencil, Plus, RefreshCw, Rss, Trash2, X } from "lucide-react";
 import { Button } from "@/components/retroui/Button";
 import { Empty } from "@/components/retroui/Empty";
 import { Input } from "@/components/retroui/Input";
@@ -12,6 +12,7 @@ import {
   normalizeFeedFetchStrategy,
   type FeedFetchStrategy,
 } from "@/lib/rss/fetch-strategy";
+import { buildOpmlExport } from "@/lib/rss/opml-export";
 import { cn } from "@/lib/utils";
 import { SectionHeader } from "./section-header";
 
@@ -68,6 +69,21 @@ export function FeedsSection() {
   const groups = useMemo(() => groupByFolder(feeds), [feeds]);
   const folders = useMemo(() => groups.map((g) => g.folder), [groups]);
 
+  function exportFeeds() {
+    if (feeds.length === 0) return;
+
+    const opml = buildOpmlExport(feeds);
+    const blob = new Blob([opml], { type: "text/x-opml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rsxonhub-feeds-${new Date().toISOString().slice(0, 10)}.opml`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function updateFeed(
     id: number,
     input: {
@@ -115,6 +131,16 @@ export function FeedsSection() {
               className="text-steel hover:text-ink"
             >
               <RefreshCw size={15} className={cn(loading && "animate-spin")} aria-hidden />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              title="导出 OPML"
+              onClick={exportFeeds}
+              disabled={loading || feeds.length === 0}
+              className="text-steel hover:text-ink"
+            >
+              <Download size={15} aria-hidden />
             </Button>
             <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
               <Plus size={15} aria-hidden />

@@ -23,12 +23,6 @@ type ChatRequestBody = {
   model?: string | null;
 };
 
-type ToolEvent = {
-  tool: string;
-  input?: Record<string, unknown>;
-  resultCount?: number;
-};
-
 const ASSISTANT_ERROR_PREFIX = "生成回复时出现错误：";
 
 export type { ChatMessageMetadata };
@@ -83,7 +77,6 @@ export async function POST(req: Request) {
 
   const historyMessages = await getConversationMessages(conversationId);
   const citedArticles = new Map<number, CitedArticle>();
-  const toolEvents: ToolEvent[] = [];
   let finishReason: string | undefined;
   let usage: Record<string, unknown> | undefined;
   let persistedError = false;
@@ -91,9 +84,6 @@ export async function POST(req: Request) {
   const tools = createChatTools({
     onCitation: (article) => {
       citedArticles.set(article.id, article);
-    },
-    onToolEvent: (event) => {
-      toolEvents.push(event);
     },
   });
 
@@ -152,10 +142,7 @@ export async function POST(req: Request) {
           content: extractMessageText(assistant),
           parts: assistant.parts,
           citedArticleIds,
-          metadata: {
-            ...metadata,
-            toolEvents,
-          } as ChatMessageMetadata,
+          metadata,
         });
       },
     });

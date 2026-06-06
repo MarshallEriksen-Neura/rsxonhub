@@ -2,7 +2,6 @@
 
 import { Moon, Sun } from "lucide-react";
 import { useSyncExternalStore } from "react";
-import { Button } from "@/components/retroui/Button";
 import { resolveTheme, useThemeStore } from "@/lib/stores/theme";
 
 const emptySubscribe = () => () => {};
@@ -25,15 +24,15 @@ export function ThemeToggle() {
   const isDark = canResolveClientTheme ? resolveTheme(theme) === "dark" : false;
 
   return (
-    <Button
-      variant="outline"
-      size="icon"
+    <span
+      role="button"
+      tabIndex={0}
       onClick={toggle}
-      disabled={isThemeTransitioning}
+      onKeyDown={(e) => e.key === "Enter" && toggle()}
       aria-label={isDark ? "切换到亮色" : "切换到暗色"}
-      aria-busy={isThemeTransitioning}
+      className="flex h-8 w-8 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
     >
       {isDark ? <Moon size={18} /> : <Sun size={18} />}
-    </Button>
+    </span>
   );
 }

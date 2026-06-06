@@ -1,21 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { generateDailyDigest } from "@/lib/digest/generate-digest";
 import { getScheduleLocalDate } from "@/lib/datetime";
 import { env } from "@/lib/env";
-import {
-  enqueueDailyDigest,
-  enqueueDailyDigestPreparation,
-} from "@/lib/jobs/feed-jobs";
+import { runDigestPreparation } from "@/lib/jobs/feed-jobs";
 
 export async function regenerateTodayDigest() {
-  await enqueueDailyDigest({ digestDate: getScheduleLocalDate(env.DIGEST_TIMEZONE) });
+  await generateDailyDigest({ digestDate: getScheduleLocalDate(env.DIGEST_TIMEZONE) });
   revalidatePath("/digest");
   revalidatePath("/logs");
 }
 
 export async function generateYesterdayDigest() {
-  await enqueueDailyDigest({
+  await generateDailyDigest({
     digestDate: previousDateKey(getScheduleLocalDate(env.DIGEST_TIMEZONE)),
   });
   revalidatePath("/digest");
@@ -24,7 +22,7 @@ export async function generateYesterdayDigest() {
 
 export async function refreshDigestCandidates() {
   const digestDate = getScheduleLocalDate(env.DIGEST_TIMEZONE);
-  await enqueueDailyDigestPreparation({ digestDate });
+  await runDigestPreparation({ digestDate });
   revalidatePath("/digest");
   revalidatePath("/logs");
 }

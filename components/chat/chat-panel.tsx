@@ -42,6 +42,7 @@ import type {
 } from "@/lib/chat/types";
 import { useChatStore } from "@/lib/stores/chat";
 import { ArticlePreviewPanel } from "@/components/chat/article-preview-panel";
+import { ToolCallBlock, hasToolCalls } from "@/components/chat/tool-call-block";
 
 /**
  * RAG 问答面板 — Manus 风格双栏布局
@@ -921,6 +922,12 @@ function MessageBubble({
           <ThinkingBlock reasoning={reasoning} isStreaming={isStreaming && !text} />
         </div>
       )}
+      {hasToolCalls(message) && (
+        <div className="max-w-[85%]">
+          <ToolCallBlock message={message} />
+        </div>
+      )}
+      {(text || error) && (
       <div className="flex justify-start">
         <div
           className={cn(
@@ -991,6 +998,7 @@ function MessageBubble({
           )}
         </div>
       </div>
+      )}
       {cited && cited.length > 0 && <SourceCitations articles={cited} />}
     </div>
   );

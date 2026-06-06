@@ -54,13 +54,18 @@ export function SettingsWorkspace({
 
   return (
     <div className="flex-1 overflow-y-auto bg-canvas">
-      <div className="mx-auto w-full max-w-7xl grid grid-cols-1 gap-6 px-4 py-6 md:grid-cols-[14rem_minmax(0,1fr)] md:px-6 md:py-8 lg:px-8 lg:py-10">
+      <div className="mx-auto w-full max-w-7xl grid grid-cols-1 gap-6 px-4 py-6 md:grid-cols-[15rem_minmax(0,1fr)] md:px-6 md:py-8 lg:px-8 lg:py-10">
         {/* 左:分区导航 */}
-        <nav className="flex flex-col gap-1 md:sticky md:top-12 md:self-start">
-          <h1 className="px-3 pb-3 text-heading-5 text-ink">设置</h1>
+        <nav className="flex flex-col md:sticky md:top-12 md:self-start">
+          <div className="mb-4 flex flex-col gap-1 px-3">
+            <span className="text-micro font-semibold uppercase tracking-[0.18em] text-stone">
+              CONFIG
+            </span>
+            <h1 className="font-head text-heading-4 font-semibold text-ink">设置</h1>
+          </div>
           {/* 移动端横向滚动,桌面端竖排 */}
           <div className="flex gap-1 overflow-x-auto pb-1 md:flex-col md:overflow-visible md:pb-0">
-            {SECTIONS.map((s) => {
+            {SECTIONS.map((s, index) => {
               const isActive = active === s.id;
               const Icon = s.icon;
               return (
@@ -70,7 +75,7 @@ export function SettingsWorkspace({
                   onClick={() => setActive(s.id)}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "group relative flex shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors duration-200",
+                    "group relative flex shrink-0 items-center gap-3 rounded-lg py-2.5 pl-3 pr-3 text-left transition-colors duration-200",
                     "active:scale-[0.98]",
                     isActive ? "text-primary" : "text-charcoal hover:bg-surface hover:text-ink",
                   )}
@@ -80,6 +85,15 @@ export function SettingsWorkspace({
                       layoutId="settings-nav-active"
                       className="absolute inset-0 -z-[1] rounded-lg bg-primary/8 ring-1 ring-primary/15"
                       transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  {/* active accent spine */}
+                  {isActive && (
+                    <motion.span
+                      layoutId="settings-nav-spine"
+                      className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-primary"
+                      transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                      aria-hidden
                     />
                   )}
                   <Icon
@@ -95,6 +109,16 @@ export function SettingsWorkspace({
                     <span className="hidden text-micro font-normal text-steel md:block">
                       {s.desc}
                     </span>
+                  </span>
+                  {/* index marker — only on desktop */}
+                  <span
+                    className={cn(
+                      "ml-auto hidden font-mono text-micro tabular-nums transition-colors md:block",
+                      isActive ? "text-primary/70" : "text-stone/60",
+                    )}
+                    aria-hidden
+                  >
+                    {String(index + 1).padStart(2, "0")}
                   </span>
                 </button>
               );
