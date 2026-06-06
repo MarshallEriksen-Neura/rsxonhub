@@ -52,7 +52,7 @@ export function FullPageError({
         className,
       )}
     >
-      <section className="w-full max-w-xl space-y-6">
+      <section className="w-full max-w-[36rem] space-y-6">
         {alertTitle && (
           <Alert status={status}>
             <Alert.Title className="mb-2 flex items-center gap-2">
@@ -82,7 +82,7 @@ export function FullPageError({
         )}
 
         <Empty className="min-h-[22rem] w-full">
-          <Empty.Content className="w-full max-w-md">
+          <Empty.Content className="w-full max-w-[28rem]">
             <Empty.Icon className="mb-2 h-20 w-20 sm:h-24 sm:w-24">
               {icon}
             </Empty.Icon>
@@ -90,7 +90,7 @@ export function FullPageError({
               {title}
             </Empty.Title>
             <Empty.Separator className="max-w-[12.5rem]" />
-            <Empty.Description className="max-w-sm break-words text-center">
+            <Empty.Description className="max-w-[20rem] break-words text-center">
               {description}
             </Empty.Description>
             <Button

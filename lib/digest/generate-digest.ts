@@ -1,6 +1,5 @@
 import { generateObject } from "ai";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { z } from "zod";
 import { chatModel, withAIRequestRetry } from "@/lib/ai";
 import { getChatConfig } from "@/lib/ai/config";
 import { db } from "@/lib/db";
@@ -15,6 +14,13 @@ import {
   usageLogs,
 } from "@/lib/db/schema";
 import {
+  DAILY_DIGEST_SCHEMA_DESCRIPTION,
+  DAILY_DIGEST_SCHEMA_NAME,
+  buildDailyDigestPrompt,
+  digestSchema,
+  repairDailyDigestText,
+} from "@/lib/digest/digest-output";
+import {
   createDigestRun,
   hasCompletedDigestRun,
   markDigestRunFinished,
@@ -25,22 +31,6 @@ import { getScheduleLocalDate } from "@/lib/datetime";
 import { env } from "@/lib/env";
 import { getActiveInterestProfile } from "@/lib/interests/profile";
 import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
-
-export const DAILY_DIGEST_PROMPT_VERSION = "daily-digest-v1";
-
-const digestSchema = z.object({
-  title: z.string().min(1).max(160),
-  summary: z.string().min(1).max(1200),
-  items: z
-    .array(
-      z.object({
-        articleId: z.number().int().positive(),
-        reason: z.string().min(1).max(360),
-      }),
-    )
-    .min(1)
-    .max(12),
-});
 
 export type GenerateDailyDigestInput = {
   digestDate?: string;
@@ -148,31 +138,30 @@ async function generateDailyDigestForProfile(
   }
   const config = await getChatConfig();
   const model = await chatModel();
+  const promptCandidates = candidates.map((candidate) => ({
+    articleId: candidate.articleId,
+    title: candidate.title,
+    source: candidate.feedTitle,
+    publishedAt: candidate.publishedAt?.toISOString() ?? null,
+    summary: candidate.aiSummary ?? candidate.summaryRaw,
+    retrievalRank: candidate.retrievalRank,
+    scoreSnapshot: candidate.scoreSnapshot,
+  }));
   const result = await withAIRequestRetry(() =>
     generateObject({
       model,
       schema: digestSchema,
+      schemaName: DAILY_DIGEST_SCHEMA_NAME,
+      schemaDescription: DAILY_DIGEST_SCHEMA_DESCRIPTION,
       temperature: 0.4,
       system:
-        "你是单用户 RSS x AI 阅读器的每日简报编辑。只能从候选文章中选择，理由必须基于用户兴趣画像和候选证据。不要引入外部事实。",
-      prompt: JSON.stringify(
-        {
-          promptVersion: DAILY_DIGEST_PROMPT_VERSION,
-          digestDate,
-          interestProfile: profile.content,
-          candidates: candidates.map((candidate) => ({
-            articleId: candidate.articleId,
-            title: candidate.title,
-            source: candidate.feedTitle,
-            publishedAt: candidate.publishedAt?.toISOString() ?? null,
-            summary: candidate.aiSummary ?? candidate.summaryRaw,
-            retrievalRank: candidate.retrievalRank,
-            scoreSnapshot: candidate.scoreSnapshot,
-          })),
-        },
-        null,
-        2,
-      ),
+        "你是单用户 RSS x AI 阅读器的每日简报编辑。输出必须是最终每日简报对象,顶层只能使用 title、summary、items。不要输出 selectedArticles。只能从候选文章中选择，理由必须基于用户兴趣画像和候选证据。不要引入外部事实。",
+      prompt: buildDailyDigestPrompt({
+        digestDate,
+        interestProfile: profile.content,
+        candidates: promptCandidates,
+      }),
+      experimental_repairText: ({ text }) => repairDailyDigestText(text, promptCandidates),
     }),
   );
 

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Button } from "@/components/retroui/Button";
 import {
   ConsolePanel,
   SectionLabel,
@@ -17,6 +16,7 @@ import {
   refreshDigestCandidates,
   regenerateTodayDigest,
 } from "./actions";
+import { DigestSubmitButton } from "./digest-submit-button";
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
 
@@ -193,19 +193,19 @@ export default async function DigestPage() {
           ) : null}
           <div className="flex flex-wrap gap-2">
             <form action={regenerateTodayDigest}>
-              <Button size="sm" type="submit">
+              <DigestSubmitButton pendingLabel="生成中">
                 重新生成今日精选
-              </Button>
+              </DigestSubmitButton>
             </form>
             <form action={generateYesterdayDigest}>
-              <Button size="sm" variant="outline" type="submit">
+              <DigestSubmitButton variant="outline" pendingLabel="生成中">
                 生成昨天
-              </Button>
+              </DigestSubmitButton>
             </form>
             <form action={refreshDigestCandidates}>
-              <Button size="sm" variant="secondary" type="submit">
+              <DigestSubmitButton variant="secondary" pendingLabel="刷新中">
                 刷新候选
-              </Button>
+              </DigestSubmitButton>
             </form>
           </div>
         </ConsolePanel>
