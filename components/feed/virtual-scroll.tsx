@@ -58,6 +58,9 @@ export interface VirtualScrollProps<T = unknown> {
   
   /** 加载更多的阈值（距离底部多少像素时触发） */
   loadMoreThreshold?: number;
+
+  /** 加载方向：默认向下滚动加载，up 用于聊天历史等反向分页列表 */
+  loadDirection?: "down" | "up";
   
   /** 空状态配置 */
   emptyState?: {
@@ -126,6 +129,7 @@ export function VirtualScroll<T = unknown>({
   className,
   containerClassName,
   loadMoreThreshold = 200,
+  loadDirection = "down",
   emptyState,
   errorState,
   loadingMoreText = DEFAULT_LOADING_MORE_TEXT,
@@ -143,6 +147,8 @@ export function VirtualScroll<T = unknown>({
 
   const parentRef = React.useRef<HTMLDivElement>(null);
   const loadRequestedRef = React.useRef(false);
+  const previousScrollHeightRef = React.useRef<number | null>(null);
+  const initialScrollDoneRef = React.useRef(false);
 
   // TanStack Virtual returns imperative helpers that React Compiler cannot memoize safely.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -160,20 +166,59 @@ export function VirtualScroll<T = unknown>({
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
-    const distanceToBottom =
-      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+    const distanceToEdge =
+      loadDirection === "up"
+        ? scrollElement.scrollTop
+        : scrollElement.scrollHeight -
+          scrollElement.scrollTop -
+          scrollElement.clientHeight;
 
-    if (distanceToBottom <= loadMoreThreshold) {
+    if (distanceToEdge <= loadMoreThreshold) {
       loadRequestedRef.current = true;
+      previousScrollHeightRef.current =
+        loadDirection === "up" ? scrollElement.scrollHeight : null;
       onLoadMore();
     }
-  }, [hasMore, isLoading, isLoadingMore, loadMoreThreshold, onLoadMore]);
+  }, [
+    hasMore,
+    isLoading,
+    isLoadingMore,
+    loadDirection,
+    loadMoreThreshold,
+    onLoadMore,
+  ]);
 
   React.useEffect(() => {
     if (!isLoadingMore) {
       loadRequestedRef.current = false;
     }
   }, [isLoadingMore]);
+
+  React.useEffect(() => {
+    if (isLoading && !isLoadingMore) {
+      initialScrollDoneRef.current = false;
+      previousScrollHeightRef.current = null;
+    }
+  }, [isLoading, isLoadingMore]);
+
+  React.useEffect(() => {
+    if (loadDirection !== "up" || isLoading || items.length === 0) return;
+
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+
+    if (!initialScrollDoneRef.current) {
+      scrollElement.scrollTop = scrollElement.scrollHeight;
+      initialScrollDoneRef.current = true;
+      return;
+    }
+
+    if (previousScrollHeightRef.current !== null && !isLoadingMore) {
+      const delta = scrollElement.scrollHeight - previousScrollHeightRef.current;
+      scrollElement.scrollTop += delta;
+      previousScrollHeightRef.current = null;
+    }
+  }, [isLoading, isLoadingMore, items.length, loadDirection]);
 
   // 监听滚动到底部，触发加载更多；也覆盖首屏未填满容器时的自动补页。
   React.useEffect(() => {
@@ -304,8 +349,31 @@ export function VirtualScroll<T = unknown>({
       </div>
 
       {/* 加载更多指示器 */}
+      {loadDirection === "up" &&
+        showLoadingMoreIndicator &&
+        (isLoadingMore || (hasMore && items.length > 0)) && (
+          <div className="flex items-center justify-center py-4">
+            {isLoadingMore ? (
+              <div className="flex items-center gap-2 text-body-sm text-muted-foreground">
+                <Loader size="sm" />
+                <span>{loadingMoreText}</span>
+              </div>
+            ) : hasMore ? (
+              <span className="text-body-sm text-muted-foreground">
+                继续向上滚动加载
+              </span>
+            ) : null}
+          </div>
+        )}
+
+      {/* 加载更多指示器 */}
       {showLoadingMoreIndicator && (isLoadingMore || (hasMore && items.length > 0)) && (
-        <div className="flex items-center justify-center py-4">
+        <div
+          className={cn(
+            "flex items-center justify-center py-4",
+            loadDirection === "up" && "hidden",
+          )}
+        >
           {isLoadingMore ? (
             <div className="flex items-center gap-2 text-body-sm text-muted-foreground">
               <Loader size="sm" />
@@ -334,6 +402,7 @@ export function VirtualScroll<T = unknown>({
 export function useVirtualScroll<T = unknown>(options?: {
   initialItems?: VirtualScrollItem<T>[];
   pageSize?: number;
+  loadDirection?: "down" | "up";
 }) {
   const [items, setItems] = React.useState<VirtualScrollItem<T>[]>(
     options?.initialItems ?? [],
@@ -348,6 +417,7 @@ export function useVirtualScroll<T = unknown>(options?: {
   const nextCursorRef = React.useRef<string | null>(null);
 
   const pageSize = options?.pageSize ?? 20;
+  const loadDirection = options?.loadDirection ?? "down";
 
   // 加载第一页
   const loadInitial = React.useCallback(
@@ -396,7 +466,11 @@ export function useVirtualScroll<T = unknown>(options?: {
           data,
         }));
         nextCursorRef.current = result.nextCursor ?? null;
-        setItems((prev) => [...prev, ...newItems]);
+        setItems((prev) =>
+          loadDirection === "up"
+            ? [...newItems, ...prev]
+            : [...prev, ...newItems],
+        );
         setState((s) => ({
           ...s,
           isLoadingMore: false,
@@ -410,7 +484,13 @@ export function useVirtualScroll<T = unknown>(options?: {
         }));
       }
     },
-    [items.length, pageSize, state.isLoadingMore, state.hasMore],
+    [
+      items.length,
+      loadDirection,
+      pageSize,
+      state.isLoadingMore,
+      state.hasMore,
+    ],
   );
 
   // 重试

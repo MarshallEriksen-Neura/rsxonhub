@@ -8,6 +8,15 @@ export type ChatMessageMetadata = {
   finishReason?: string;
   usage?: Record<string, unknown>;
   error?: string;
+  contextWindow?: {
+    compressed: boolean;
+    thresholdTokens: number;
+    estimatedTokens: number;
+    originalMessageCount: number;
+    retainedMessageCount: number;
+    summarizedMessageCount?: number;
+    summaryEstimatedTokens?: number;
+  };
 };
 
 export type ChatUIMessage = UIMessage<ChatMessageMetadata>;

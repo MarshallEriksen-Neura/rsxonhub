@@ -14,6 +14,20 @@ describe("article cursor", () => {
     });
   });
 
+  test("preserves optional importance score for importance sorting", () => {
+    const cursor = encodeArticleCursor({
+      sortAt: "2026-04-09T06:52:14.000Z",
+      id: 50,
+      importance: 82,
+    });
+
+    expect(parseArticleCursor(cursor)).toEqual({
+      sortAt: "2026-04-09T06:52:14.000Z",
+      id: 50,
+      importance: 82,
+    });
+  });
+
   test("returns null for invalid cursors", () => {
     expect(parseArticleCursor(null)).toBeNull();
     expect(parseArticleCursor("not-base64-json")).toBeNull();

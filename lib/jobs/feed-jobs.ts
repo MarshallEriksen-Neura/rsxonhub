@@ -313,17 +313,20 @@ export async function registerFeedJobs() {
   await boss.work<ArticleEmbedJob>(
     JOB_NAMES.articleEmbed,
     async (jobs: Job<ArticleEmbedJob>[]) => {
-      await Promise.all(
+      const indexedArticles = await Promise.all(
         jobs.map((job) => {
           if (job.data.rebuildRunId) {
-            return rebuildArticleEmbeddings(job.data.rebuildRunId);
+            return rebuildArticleEmbeddings(job.data.rebuildRunId).then(() => null);
           }
           if (!job.data.articleId) {
             throw new Error("article.embed requires articleId or rebuildRunId");
           }
-          return embedSingleArticle(job.data.articleId);
+          return embedSingleArticle(job.data.articleId).then(() => job.data.articleId ?? null);
         }),
       );
+      if (indexedArticles.some((articleId) => articleId != null)) {
+        await enqueueDailyDigestPreparation();
+      }
     },
   );
 
@@ -367,22 +370,24 @@ export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
 
   try {
     await enqueueDueFeedScan();
-    const candidates = await selectDigestCandidates({ digestDate });
-    const enqueuedAnalysisCount = await enqueueAnalysisForCurrentCandidates(digestDate);
+    const {
+      candidateCount,
+      enqueuedAnalysisCount,
+    } = await enqueueAnalysisForSelectedCandidates({ digestDate });
 
     await markDigestRunFinished(run.id, {
-      status: candidates.length > 0 ? "success" : "skipped",
-      error: candidates.length > 0 ? null : "no_candidates",
+      status: candidateCount > 0 ? "success" : "skipped",
+      error: candidateCount > 0 ? null : "no_candidates",
       metadata: {
-        candidateCount: candidates.length,
+        candidateCount,
         enqueuedAnalysisCount,
       },
     });
 
     return {
-      skipped: candidates.length === 0,
-      reason: candidates.length === 0 ? "no_candidates" : null,
-      candidateCount: candidates.length,
+      skipped: candidateCount === 0,
+      reason: candidateCount === 0 ? "no_candidates" : null,
+      candidateCount,
       enqueuedAnalysisCount,
     };
   } catch (error) {
@@ -394,8 +399,21 @@ export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
   }
 }
 
-export async function enqueueAnalysisForCurrentCandidates(digestDate?: string) {
-  const candidates = await selectDigestCandidates({ digestDate });
+export async function enqueueAnalysisForSelectedCandidates(input: {
+  digestDate?: string;
+} = {}) {
+  const candidates = await selectDigestCandidates({ digestDate: input.digestDate });
+  const enqueuedAnalysisCount = await enqueueAnalysisForCurrentCandidates(candidates);
+
+  return {
+    candidateCount: candidates.length,
+    enqueuedAnalysisCount,
+  };
+}
+
+export async function enqueueAnalysisForCurrentCandidates(
+  candidates: Awaited<ReturnType<typeof selectDigestCandidates>>,
+) {
   if (candidates.length === 0) return 0;
 
   const pending = await db

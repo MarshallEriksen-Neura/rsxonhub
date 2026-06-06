@@ -37,6 +37,7 @@ export const aiConfigs = pgTable(
     baseUrl: text("base_url").notNull(),
     apiKey: text("api_key"),
     model: text("model").notNull(),
+    chatApiMode: text("chat_api_mode", { enum: ["chat_completions", "responses"] }),
     temperature: real("temperature"),
     dimension: integer("dimension"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

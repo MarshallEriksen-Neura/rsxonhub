@@ -17,6 +17,7 @@ export async function GET(request: Request) {
   const feedId = numberParam(searchParams.get("feedId"));
   const articleId = numberParam(searchParams.get("articleId"));
   const search = searchParams.get("search")?.trim();
+  const sort = parseArticleSort(searchParams.get("sort"));
   const limit = clamp(numberParam(searchParams.get("limit")) ?? 20, 1, 100);
   const queryLimit = articleId ? 1 : limit + 1;
   const cursor = parseArticleCursor(searchParams.get("cursor"));
@@ -49,13 +50,30 @@ export async function GET(request: Request) {
   }
 
   const sortAt = sql<string>`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`;
+  const sortImportance = sql<number>`coalesce(${articleSummaries.importance}, 0)`;
   if (cursor && !articleId) {
-    conditions.push(
-      or(
-        lt(sortAt, cursor.sortAt),
-        and(eq(sortAt, cursor.sortAt), lt(articles.id, cursor.id)),
-      ),
-    );
+    if (sort === "importance") {
+      const cursorImportance = cursor.importance ?? 0;
+      conditions.push(
+        or(
+          lt(sortImportance, cursorImportance),
+          and(
+            eq(sortImportance, cursorImportance),
+            or(
+              lt(sortAt, cursor.sortAt),
+              and(eq(sortAt, cursor.sortAt), lt(articles.id, cursor.id)),
+            ),
+          ),
+        ),
+      );
+    } else {
+      conditions.push(
+        or(
+          lt(sortAt, cursor.sortAt),
+          and(eq(sortAt, cursor.sortAt), lt(articles.id, cursor.id)),
+        ),
+      );
+    }
   }
 
   const rows = await db
@@ -77,13 +95,14 @@ export async function GET(request: Request) {
       tags: articleSummaries.tags,
       importance: articleSummaries.importance,
       sortAt,
+      sortImportance,
     })
     .from(articles)
     .innerJoin(feeds, eq(feeds.id, articles.feedId))
     .leftJoin(readStates, eq(readStates.articleId, articles.id))
     .leftJoin(articleSummaries, eq(articleSummaries.articleId, articles.id))
     .where(conditions.length ? sql.join(conditions, sql` and `) : undefined)
-    .orderBy(desc(sortAt), desc(articles.id))
+    .orderBy(...articleOrderBy(sort, sortImportance, sortAt))
     .limit(queryLimit);
 
   const pageRows = articleId ? rows : rows.slice(0, limit);
@@ -92,7 +111,11 @@ export async function GET(request: Request) {
   const lastSortAt = toIsoString(lastRow?.sortAt);
   const nextCursor =
     hasMore && lastRow && lastSortAt
-      ? encodeArticleCursor({ sortAt: lastSortAt, id: lastRow.id })
+      ? encodeArticleCursor({
+          sortAt: lastSortAt,
+          id: lastRow.id,
+          ...(sort === "importance" ? { importance: lastRow.sortImportance } : {}),
+        })
       : null;
 
   return NextResponse.json({
@@ -174,8 +197,22 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function parseArticleSort(value: string | null) {
+  return value === "importance" ? "importance" : "latest";
+}
+
+function articleOrderBy(
+  sort: "latest" | "importance",
+  sortImportance: ReturnType<typeof sql<number>>,
+  sortAt: ReturnType<typeof sql<string>>,
+) {
+  return sort === "importance"
+    ? [desc(sortImportance), desc(sortAt), desc(articles.id)]
+    : [desc(sortAt), desc(articles.id)];
+}
+
 function importanceLevel(value: number | null) {
-  if (value == null) return "low";
+  if (value == null) return "unknown";
   if (value >= 70) return "high";
   if (value >= 40) return "medium";
   return "low";

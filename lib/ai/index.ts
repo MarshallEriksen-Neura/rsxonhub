@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { getChatConfig, getEmbeddingConfig } from "@/lib/ai/config";
 import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
-import { aiRequestFetch, createAIRequestFetch } from "@/lib/ai/proxy-fetch";
+import { createAIRequestFetch } from "@/lib/ai/proxy-fetch";
 import {
   type AIRetryOptions,
   withExponentialBackoff,
@@ -26,11 +26,20 @@ export async function chatModel() {
   const config = await getChatConfig();
   assertConfiguredApiKey("对话模型", config.apiKey);
 
-  return createOpenAI({
+  const provider = createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
-    fetch: aiRequestFetch,
-  })(config.model);
+    fetch: createAIRequestFetch({
+      nvidiaChatTemplateKwargs: {
+        thinking: true,
+        reasoning_effort: "high",
+      },
+    }),
+  });
+
+  return config.chatApiMode === "responses"
+    ? provider.responses(config.model)
+    : provider.chat(config.model);
 }
 
 export async function embeddingModel(inputType: "passage" | "query" = "query") {

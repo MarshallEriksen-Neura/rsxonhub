@@ -3,7 +3,7 @@
  * 形状刻意贴合 lib/db/schema.ts,迁移时改动最小。
  */
 
-export type Importance = "high" | "medium" | "low";
+export type Importance = "high" | "medium" | "low" | "unknown";
 
 export type MockArticle = {
   id: number;

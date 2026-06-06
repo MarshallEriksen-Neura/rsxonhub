@@ -12,6 +12,7 @@ describe("AI config save planning", () => {
     baseUrl: "https://old-chat.example/v1",
     apiKey: "old-chat-key",
     model: "old-chat",
+    chatApiMode: "responses",
     temperature: 0.5,
   };
   const embedding: EmbeddingConfigPlanInput = {
@@ -45,7 +46,31 @@ describe("AI config save planning", () => {
 
     const next = buildNextAIConfigPlan(parsed, chat, embedding);
     expect(next.chat.apiKey).toBe("old-chat-key");
+    expect(next.chat.chatApiMode).toBe("responses");
     expect(next.embedding.apiKey).toBe("old-embedding-key");
+  });
+
+  test("applies explicit chat API mode changes", () => {
+    const next = buildNextAIConfigPlan(
+      {
+        chat: {
+          baseUrl: "https://chat.example/v1",
+          apiKey: "",
+          model: "chat-model",
+          chatApiMode: "chat_completions",
+          temperature: 0.7,
+        },
+        embedding: {
+          baseUrl: "https://embedding.example/v1",
+          apiKey: "",
+          model: "embedding-model",
+        },
+      },
+      chat,
+      embedding,
+    );
+
+    expect(next.chat.chatApiMode).toBe("chat_completions");
   });
 });
 

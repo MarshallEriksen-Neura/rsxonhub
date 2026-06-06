@@ -5,4 +5,7 @@ export async function register() {
 
   const { bootstrapDatabase } = await import("@/lib/db/bootstrap");
   await bootstrapDatabase();
+
+  const { startInlineJobRuntime } = await import("@/lib/jobs/runtime");
+  await startInlineJobRuntime();
 }

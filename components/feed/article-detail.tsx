@@ -30,12 +30,14 @@ const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"
   high: "outline",
   medium: "surface",
   low: "default",
+  unknown: "default",
 };
 
 const importanceLabelMap: Record<Importance, string> = {
   high: "高",
   medium: "中",
   low: "低",
+  unknown: "未评",
 };
 
 /**

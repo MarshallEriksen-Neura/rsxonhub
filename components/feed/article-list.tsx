@@ -16,13 +16,17 @@ const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"
   high: "outline",
   medium: "surface",
   low: "default",
+  unknown: "default",
 };
 
 const importanceLabelMap: Record<Importance, string> = {
   high: "高",
   medium: "中",
   low: "低",
+  unknown: "未评",
 };
+
+type ArticleSort = "latest" | "importance";
 
 /**
  * /feed 中栏 · 文章列表。
@@ -44,6 +48,7 @@ export function ArticleList() {
   const selectArticle = useFeedStore((s) => s.selectArticle);
   const setFeeds = useFeedStore((s) => s.setFeeds);
   const [refreshing, setRefreshing] = useState(false);
+  const [sort, setSort] = useState<ArticleSort>("latest");
 
   // 使用虚拟滚动 Hook
   const {
@@ -62,6 +67,7 @@ export function ArticleList() {
     const params = new URLSearchParams({
       view,
       limit: String(size),
+      sort,
     });
     if (cursor) params.set("cursor", cursor);
     if (selectedFeedId) params.set("feedId", String(selectedFeedId));
@@ -78,7 +84,7 @@ export function ArticleList() {
       hasMore: Boolean(payload.pagination?.hasMore),
       nextCursor: payload.pagination?.nextCursor ?? null,
     };
-  }, [search, selectedFeedId, view]);
+  }, [search, selectedFeedId, sort, view]);
   
   // 当 view 或 search 变化时重新加载
   useEffect(() => {
@@ -138,10 +144,24 @@ export function ArticleList() {
         </div>
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
-            <Button variant="default" size="sm" className="rounded-full px-3">
+            <Button
+              type="button"
+              variant={sort === "latest" ? "default" : "outline"}
+              size="sm"
+              aria-pressed={sort === "latest"}
+              onClick={() => setSort("latest")}
+              className="rounded-full px-3"
+            >
               最新
             </Button>
-            <Button variant="outline" size="sm" className="rounded-full px-3">
+            <Button
+              type="button"
+              variant={sort === "importance" ? "default" : "outline"}
+              size="sm"
+              aria-pressed={sort === "importance"}
+              onClick={() => setSort("importance")}
+              className="rounded-full px-3"
+            >
               重要度
             </Button>
           </div>
@@ -264,7 +284,11 @@ function ArticleListItem({
           >
             {article.title}
           </h3>
-          <Badge variant={importanceVariantMap[article.importance]} size="sm">
+          <Badge
+            variant={importanceVariantMap[article.importance]}
+            size="sm"
+            className={cn(article.importance === "unknown" && "opacity-60")}
+          >
             {importanceLabelMap[article.importance]}
           </Badge>
         </div>

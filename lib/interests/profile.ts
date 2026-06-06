@@ -1,6 +1,7 @@
 import { embed } from "ai";
 import { desc, eq, sql } from "drizzle-orm";
 import {
+  EMBEDDING_DIM,
   embeddingModelWithConfig,
   withAIRequestRetry,
 } from "@/lib/ai";
@@ -105,6 +106,11 @@ async function embedInterestProfile(content: string) {
       value: content,
     }),
   );
+  if (result.embedding.length !== EMBEDDING_DIM) {
+    throw new Error(
+      `向量模型维度为 ${result.embedding.length},但当前数据库向量列需要 ${EMBEDDING_DIM}。请在设置页切换为 ${EMBEDDING_DIM} 维向量模型,或先调整向量列迁移和重建计划。`,
+    );
+  }
 
   return {
     embedding: result.embedding,

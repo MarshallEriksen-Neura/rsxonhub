@@ -48,6 +48,11 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "INVALID_ID" }, { status: 400 });
   }
 
+  const conversation = await getConversation(id);
+  if (!conversation) {
+    return NextResponse.json({ error: "CONVERSATION_NOT_FOUND" }, { status: 404 });
+  }
+
   await deleteConversation(id);
   return NextResponse.json({ ok: true });
 }

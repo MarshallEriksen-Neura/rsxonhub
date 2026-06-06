@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users, aiConfigs } from "@/lib/db/schema";
 import {
+  DEFAULT_CHAT_API_MODE,
   DEFAULT_CHAT_BASE_URL,
   DEFAULT_CHAT_MODEL,
   DEFAULT_CHAT_TEMPERATURE,
@@ -128,6 +129,7 @@ async function initAIConfigs() {
       kind: "chat",
       baseUrl: DEFAULT_CHAT_BASE_URL,
       model: DEFAULT_CHAT_MODEL,
+      chatApiMode: DEFAULT_CHAT_API_MODE,
       temperature: DEFAULT_CHAT_TEMPERATURE,
     })
     .onConflictDoNothing({

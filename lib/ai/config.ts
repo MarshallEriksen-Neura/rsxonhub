@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { aiConfigs } from "@/lib/db/schema";
 import {
+  DEFAULT_CHAT_API_MODE,
   DEFAULT_CHAT_BASE_URL,
   DEFAULT_CHAT_MODEL,
   DEFAULT_CHAT_TEMPERATURE,
@@ -11,7 +12,9 @@ import {
   DEFAULT_EMBEDDING_MODEL,
 } from "@/lib/ai/defaults";
 import { maskSecret } from "@/lib/ai/mask";
-import { buildNextAIConfigPlan } from "@/lib/ai/config-plan";
+import { buildNextAIConfigPlan, type ChatApiMode } from "@/lib/ai/config-plan";
+
+export type { ChatApiMode };
 
 export type AIConfigKind = "chat" | "embedding";
 
@@ -20,6 +23,7 @@ export type ChatRuntimeConfig = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  chatApiMode: ChatApiMode;
   temperature: number;
 };
 
@@ -53,6 +57,9 @@ const saveAIConfigSchema = z.object({
     baseUrl: z.preprocess((value) => trimString(value), z.string().url()),
     apiKey: z.string().optional(),
     model: z.preprocess((value) => trimString(value), z.string().min(1)),
+    chatApiMode: z
+      .enum(["chat_completions", "responses"])
+      .default(DEFAULT_CHAT_API_MODE),
     temperature: z.coerce.number().min(0).max(2),
   }),
   embedding: z.object({
@@ -128,6 +135,7 @@ export function buildNextAIConfigs(
     baseUrl: parsed.chat.baseUrl,
     apiKey: nextApiKey(parsed.chat.apiKey, existingChat.apiKey),
     model: parsed.chat.model,
+    chatApiMode: parsed.chat.chatApiMode,
     temperature: parsed.chat.temperature,
   };
 
@@ -170,6 +178,7 @@ function defaultRuntimeConfig(kind: AIConfigKind): AIRuntimeConfig {
       baseUrl: DEFAULT_CHAT_BASE_URL,
       apiKey: "",
       model: DEFAULT_CHAT_MODEL,
+      chatApiMode: DEFAULT_CHAT_API_MODE,
       temperature: DEFAULT_CHAT_TEMPERATURE,
     };
   }
@@ -194,6 +203,7 @@ function rowToRuntimeConfig(kind: AIConfigKind, row?: AIConfigRow): AIRuntimeCon
       baseUrl: row.baseUrl || defaults.baseUrl,
       apiKey: row.apiKey ?? "",
       model: row.model || defaults.model,
+      chatApiMode: parseChatApiMode(row.chatApiMode),
       temperature: row.temperature ?? DEFAULT_CHAT_TEMPERATURE,
     };
   }
@@ -217,6 +227,7 @@ async function upsertConfig(config: AIRuntimeConfig) {
       baseUrl: config.baseUrl,
       apiKey: config.apiKey.trim() || null,
       model: config.model,
+      chatApiMode: config.kind === "chat" ? config.chatApiMode : null,
       temperature: config.kind === "chat" ? config.temperature : null,
       dimension: config.kind === "embedding" ? config.dimension : null,
       updatedAt: sql`now()`,
@@ -227,6 +238,7 @@ async function upsertConfig(config: AIRuntimeConfig) {
         baseUrl: config.baseUrl,
         apiKey: config.apiKey.trim() || null,
         model: config.model,
+        chatApiMode: config.kind === "chat" ? config.chatApiMode : null,
         temperature: config.kind === "chat" ? config.temperature : null,
         dimension: config.kind === "embedding" ? config.dimension : null,
         updatedAt: sql`now()`,
@@ -255,6 +267,10 @@ function nextApiKey(next: string | undefined, previous: string) {
   }
 
   return trimmed;
+}
+
+function parseChatApiMode(value: unknown): ChatApiMode {
+  return value === "responses" ? "responses" : DEFAULT_CHAT_API_MODE;
 }
 
 function trimString(value: unknown) {

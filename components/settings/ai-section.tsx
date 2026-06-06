@@ -2,12 +2,12 @@
 
 import { useMemo, useState, useTransition } from "react";
 import {
-  AlertCircle,
   BrainCircuit,
   Check,
   Database,
   Eye,
   EyeOff,
+  Info,
   Loader2,
   Lock,
   MessageSquare,
@@ -54,6 +54,7 @@ type ChatDraft = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  chatApiMode: "chat_completions" | "responses";
   temperature: number;
 };
 
@@ -83,6 +84,7 @@ export function AISection({
     baseUrl: initialConfig.chat.baseUrl,
     apiKey: "",
     model: initialConfig.chat.model,
+    chatApiMode: initialConfig.chat.chatApiMode,
     temperature: initialConfig.chat.temperature,
   }));
   const [embedding, setEmbedding] = useState<EmbeddingDraft>(() => ({
@@ -98,8 +100,6 @@ export function AISection({
     initialModelPresets.embedding,
   );
   const [dirty, setDirty] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [modelFetchKind, setModelFetchKind] = useState<"chat" | "embedding" | null>(null);
   const [testKind, setTestKind] = useState<"chat" | "embedding" | null>(null);
@@ -158,8 +158,6 @@ export function AISection({
 
   const markDirty = () => {
     setDirty(true);
-    setNotice(null);
-    setError(null);
   };
 
   const selectModel = (model: ModelItem) => {
@@ -194,7 +192,13 @@ export function AISection({
         kind === "chat" ? "正在测试对话模型..." : "正在测试向量模型...",
       );
       try {
-        const result = await testAIConnection({ kind, baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model });
+        const result = await testAIConnection({
+          kind,
+          baseUrl: config.baseUrl,
+          apiKey: config.apiKey,
+          model: config.model,
+          ...(kind === "chat" ? { chatApiMode: chat.chatApiMode } : {}),
+        });
         if (result.ok) {
           toast.success(result.message, { id: toastId });
         } else {
@@ -212,8 +216,6 @@ export function AISection({
 
   const refreshModels = (kind: "chat" | "embedding") => {
     setModelFetchKind(kind);
-    setNotice(null);
-    setError(null);
 
     startTransition(async () => {
       const config = kind === "chat" ? chat : embedding;
@@ -226,7 +228,7 @@ export function AISection({
       setModelFetchKind(null);
 
       if (!result.ok) {
-        setError(result.message);
+        toast.error(result.message);
         return;
       }
 
@@ -238,7 +240,7 @@ export function AISection({
         setModelFilter("embedding");
       }
 
-      setNotice(result.message);
+      toast.success(result.message);
     });
   };
 
@@ -258,12 +260,9 @@ export function AISection({
             probedDimension: result.probedDimension,
             expectedDimension: result.expectedDimension,
           });
-          setError(null);
-          setNotice(null);
           return;
         }
-        setError(result.message);
-        setNotice(null);
+        toast.error(result.message);
         return;
       }
 
@@ -273,6 +272,7 @@ export function AISection({
         apiKey: "",
         baseUrl: result.config.chat.baseUrl,
         model: result.config.chat.model,
+        chatApiMode: result.config.chat.chatApiMode,
         temperature: result.config.chat.temperature,
       }));
       setEmbedding((current) => ({
@@ -295,8 +295,7 @@ export function AISection({
         ]),
       );
       setDirty(false);
-      setError(null);
-      setNotice(result.message);
+      toast.success(result.message);
     });
   };
 
@@ -322,19 +321,6 @@ export function AISection({
         }
       />
 
-      {(notice || error) && (
-        <div
-          className={cn(
-            "mb-5 flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm",
-            error
-              ? "border-destructive/40 bg-destructive/5 text-destructive"
-              : "border-hairline bg-surface text-charcoal",
-          )}
-        >
-          <AlertCircle size={15} aria-hidden />
-          <span>{error ?? notice}</span>
-        </div>
-      )}
 
       {pendingRebuild ? (
         <div className="mb-5 flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-body-sm text-charcoal">
@@ -373,6 +359,7 @@ export function AISection({
             desc="聊天、摘要、日报筛选等文本生成任务会从这里读取"
             icon={MessageSquare}
             active={savedConfig.chat.apiKeyConfigured}
+            tooltip="仅支持 OpenAI 兼容格式的模型（OpenAI-compatible API）"
           >
             <Field label="API Key">
               <KeyField
@@ -397,6 +384,28 @@ export function AISection({
                 onChange={(event) => updateChat({ model: event.target.value })}
                 placeholder="deepseek-ai/deepseek-v3.1"
                 className="font-mono"
+              />
+            </Field>
+
+            <Field
+              label="对话接口模式"
+              hint="OpenAI 兼容服务通常选 Chat Completions"
+            >
+              <SegmentedControl
+                value={chat.chatApiMode}
+                options={[
+                  {
+                    value: "chat_completions",
+                    label: "Chat Completions",
+                    description: "/v1/chat/completions",
+                  },
+                  {
+                    value: "responses",
+                    label: "Responses",
+                    description: "/v1/responses",
+                  },
+                ]}
+                onChange={(chatApiMode) => updateChat({ chatApiMode })}
               />
             </Field>
 
@@ -516,12 +525,14 @@ function RuntimePanel({
   desc,
   icon: Icon,
   active,
+  tooltip,
   children,
 }: {
   title: string;
   desc: string;
   icon: typeof MessageSquare;
   active: boolean;
+  tooltip?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -532,7 +543,14 @@ function RuntimePanel({
             <Icon size={17} aria-hidden />
           </span>
           <div>
-            <h3 className="text-body font-medium text-ink">{title}</h3>
+            <h3 className="flex items-center gap-1.5 text-body font-medium text-ink">
+              {title}
+              {tooltip && (
+                <span title={tooltip} className="cursor-help text-steel hover:text-charcoal">
+                  <Info size={13} aria-hidden />
+                </span>
+              )}
+            </h3>
             <p className="mt-1 text-body-sm text-steel">{desc}</p>
           </div>
         </div>
@@ -614,6 +632,42 @@ function FetchModelsButton({
         )}
         获取模型列表
       </Button>
+    </div>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string; description: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "min-w-0 rounded-md border px-3 py-2 text-left transition-colors",
+              active
+                ? "border-primary/50 bg-primary/8 text-ink"
+                : "border-hairline bg-surface text-charcoal hover:border-primary/30",
+            )}
+          >
+            <span className="block text-body-sm-medium">{option.label}</span>
+            <span className="block truncate font-mono text-micro text-steel">
+              {option.description}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -9,6 +9,10 @@ type NvidiaEmbeddingInputType = "passage" | "query";
 
 type AIRequestFetchOptions = {
   nvidiaEmbeddingInputType?: NvidiaEmbeddingInputType;
+  nvidiaChatTemplateKwargs?: {
+    thinking?: boolean;
+    reasoning_effort?: "low" | "medium" | "high";
+  };
 };
 
 export function aiProxyUrl() {
@@ -29,11 +33,11 @@ export function createAIRequestFetch(options: AIRequestFetchOptions = {}) {
   ): Promise<Response> => {
     const request = await buildAIRequest(input, init, options);
     const proxyUrl = aiProxyUrl();
-    if (!proxyUrl) {
-      return fetchDirect(request);
-    }
+    const response = proxyUrl
+      ? await fetchViaHttpProxy(request, parseHttpProxyUrl(proxyUrl))
+      : await fetchDirect(request);
 
-    return fetchViaHttpProxy(request, parseHttpProxyUrl(proxyUrl));
+    return assertAIResponseProtocol(request, response);
   };
 }
 
@@ -73,7 +77,7 @@ async function buildAIRequest(
   const request = new Request(input, init);
   const target = parseHttpUrl(request.url, "AI request URL");
   const body = await requestBodyBuffer(request);
-  const patchedBody = patchNvidiaEmbeddingRequestBody(target, body, options);
+  const patchedBody = patchNvidiaRequestBody(target, body, options);
 
   if (patchedBody === body && body === null) {
     return request;
@@ -132,11 +136,56 @@ function patchNvidiaEmbeddingRequestBody(
   );
 }
 
+function patchNvidiaRequestBody(
+  target: URL,
+  body: Buffer | null,
+  options: AIRequestFetchOptions,
+) {
+  const embeddingBody = patchNvidiaEmbeddingRequestBody(target, body, options);
+  if (embeddingBody !== body) return embeddingBody;
+
+  if (!options.nvidiaChatTemplateKwargs || !body || !isNvidiaChatRequest(target)) {
+    return body;
+  }
+
+  const payload = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+  const extraBody =
+    isRecord(payload.extra_body) ? payload.extra_body : {};
+  const chatTemplateKwargs =
+    isRecord(extraBody.chat_template_kwargs)
+      ? extraBody.chat_template_kwargs
+      : {};
+
+  return Buffer.from(
+    JSON.stringify({
+      ...payload,
+      extra_body: {
+        ...extraBody,
+        chat_template_kwargs: {
+          ...chatTemplateKwargs,
+          ...options.nvidiaChatTemplateKwargs,
+        },
+      },
+    }),
+  );
+}
+
 function isNvidiaEmbeddingRequest(target: URL) {
   return (
     target.hostname.toLowerCase() === "integrate.api.nvidia.com" &&
     target.pathname.endsWith("/embeddings")
   );
+}
+
+function isNvidiaChatRequest(target: URL) {
+  return (
+    target.hostname.toLowerCase() === "integrate.api.nvidia.com" &&
+    target.pathname.endsWith("/chat/completions")
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function requestHttpViaProxy(options: ProxyRequestOptions) {
@@ -361,6 +410,56 @@ function arrayBufferBody(body: Uint8Array) {
 
 function requestBodyInit(body: Buffer | null) {
   return body ? arrayBufferBody(new Uint8Array(body)) : null;
+}
+
+async function assertAIResponseProtocol(request: Request, response: Response) {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    await assertJsonResponseBody(request, response, contentType);
+    return response;
+  }
+
+  if (contentType.includes("text/event-stream")) {
+    return response;
+  }
+
+  const bodyPreview = await response.clone().text().catch(() => "");
+  throwAIResponseProtocolError(request, response, contentType, bodyPreview);
+}
+
+async function assertJsonResponseBody(
+  request: Request,
+  response: Response,
+  contentType: string,
+) {
+  const body = await response.clone().text().catch(() => "");
+  try {
+    JSON.parse(body);
+  } catch {
+    throwAIResponseProtocolError(request, response, contentType, body);
+  }
+}
+
+function throwAIResponseProtocolError(
+  request: Request,
+  response: Response,
+  contentType: string,
+  body: string,
+): never {
+  throw new Error(
+    [
+      "AI provider returned an invalid JSON response",
+      `url=${redactUrl(new URL(request.url))}`,
+      `status=${response.status} ${response.statusText || ""}`.trim(),
+      `content-type=${contentType || "missing"}`,
+      `body-preview=${previewBody(body)}`,
+    ].join("; "),
+  );
+}
+
+function previewBody(value: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 240 ? `${compact.slice(0, 240)}...` : compact;
 }
 
 type ProxyRequestOptions = {

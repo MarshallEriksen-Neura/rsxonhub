@@ -12,6 +12,9 @@ import {
   PenTool,
   Search,
   ArrowUp,
+  AlertCircle,
+  Loader2,
+  X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useChat } from "@ai-sdk/react";
@@ -58,21 +61,22 @@ const QUICK_ACTIONS = [
 ];
 
 const DAY = 86_400_000;
+const ASSISTANT_ERROR_PREFIX = "生成回复时出现错误：";
 
 /** 按更新时间把会话分到「今天 / 昨天 / 更早」三组，空组不渲染。 */
 function groupByRecency(sessions: ChatSession[]) {
   const now = Date.now();
   const startOfToday = new Date(now).setHours(0, 0, 0, 0);
   const buckets: { key: string; label: string; items: ChatSession[] }[] = [
-    { key: "today", label: "今天", items: [] },
-    { key: "yesterday", label: "昨天", items: [] },
     { key: "earlier", label: "更早", items: [] },
+    { key: "yesterday", label: "昨天", items: [] },
+    { key: "today", label: "今天", items: [] },
   ];
   for (const s of sessions) {
     const t = s.updatedAt.getTime();
-    if (t >= startOfToday) buckets[0].items.push(s);
+    if (t >= startOfToday) buckets[2].items.push(s);
     else if (t >= startOfToday - DAY) buckets[1].items.push(s);
-    else buckets[2].items.push(s);
+    else buckets[0].items.push(s);
   }
   return buckets.filter((b) => b.items.length > 0);
 }
@@ -92,6 +96,8 @@ function toHistoryItems(sessions: ChatSession[]): VirtualScrollItem<HistoryListI
 
 export function ChatPanel() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState<string | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -102,7 +108,11 @@ export function ChatPanel() {
     loadInitial: loadInitialConversations,
     loadMore: loadMoreConversations,
     retry: retryConversations,
-  } = useVirtualScroll<ChatSession>({ pageSize: 24 });
+    setItems: setConversationItems,
+  } = useVirtualScroll<ChatSession>({
+    pageSize: 24,
+    loadDirection: "up",
+  });
 
   const fetchConversations = useCallback(
     async (_page: number, size: number, cursor?: string | null) => {
@@ -123,7 +133,7 @@ export function ChatPanel() {
       }
 
       return {
-        data: (payload.conversations ?? []).map(toChatSession),
+        data: (payload.conversations ?? []).map(toChatSession).reverse(),
         hasMore: Boolean(payload.pagination?.hasMore),
         nextCursor: payload.pagination?.nextCursor ?? null,
       };
@@ -143,6 +153,12 @@ export function ChatPanel() {
   const { messages, setMessages, sendMessage, status } = useChat<ChatUIMessage>({
     transport,
     messageMetadataSchema: jsonSchema({ type: "object" }),
+    onError: (error) => {
+      setMessages((current) =>
+        upsertAssistantErrorMessage(current, error, activeSessionId),
+      );
+      void loadInitialConversations(fetchConversations);
+    },
     onFinish: ({ message }) => {
       const conversationId = message.metadata?.conversationId;
       if (conversationId) {
@@ -168,11 +184,13 @@ export function ChatPanel() {
   const createNewSession = useCallback(() => {
     setMessages([]);
     setActiveSessionId(null);
+    setDeleteConfirmSessionId(null);
     setInput("");
   }, [setMessages]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
+      setDeleteConfirmSessionId(null);
       const response = await fetch(`/api/chat/conversations/${sessionId}`);
       if (!response.ok) return;
       const data = (await response.json()) as { messages: ChatUIMessage[] };
@@ -182,23 +200,43 @@ export function ChatPanel() {
     [setMessages],
   );
 
+  const requestDeleteSession = useCallback((sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteConfirmSessionId(sessionId);
+  }, []);
+
+  const cancelDeleteSession = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteConfirmSessionId(null);
+  }, []);
+
   const deleteSession = useCallback(
     async (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const response = await fetch(`/api/chat/conversations/${sessionId}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) return;
-      void loadInitialConversations(fetchConversations);
-      if (activeSessionId === sessionId) {
-        setMessages([]);
-        setActiveSessionId(null);
+      setDeletingSessionId(sessionId);
+      try {
+        const response = await fetch(`/api/chat/conversations/${sessionId}`, {
+          method: "DELETE",
+        });
+        if (!response.ok) return;
+        setDeleteConfirmSessionId(null);
+        setConversationItems((current) =>
+          current.filter((item) => item.data.id !== sessionId),
+        );
+        void loadInitialConversations(fetchConversations);
+        if (activeSessionId === sessionId) {
+          setMessages([]);
+          setActiveSessionId(null);
+        }
+      } finally {
+        setDeletingSessionId(null);
       }
     },
     [
       activeSessionId,
       fetchConversations,
       loadInitialConversations,
+      setConversationItems,
       setMessages,
     ],
   );
@@ -265,6 +303,7 @@ export function ChatPanel() {
           state={conversationState}
           onLoadMore={() => loadMoreConversations(fetchConversations)}
           onRetry={() => retryConversations(fetchConversations)}
+          loadDirection="up"
           containerClassName="px-2 pb-4"
           showLoadingMoreIndicator
           loadingMoreText="加载聊天记录..."
@@ -283,8 +322,12 @@ export function ChatPanel() {
             <HistoryItemRow
               item={item}
               activeSessionId={activeSessionId}
+              deleteConfirmSessionId={deleteConfirmSessionId}
+              deletingSessionId={deletingSessionId}
               onSelect={selectSession}
-              onDelete={deleteSession}
+              onRequestDelete={requestDeleteSession}
+              onCancelDelete={cancelDeleteSession}
+              onConfirmDelete={deleteSession}
             />
           )}
         />
@@ -360,12 +403,20 @@ function SessionRow({
   session,
   active,
   onSelect,
-  onDelete,
+  confirming,
+  deleting,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
 }: {
   session: ChatSession;
   active: boolean;
   onSelect: () => void;
-  onDelete: (e: React.MouseEvent) => void;
+  confirming: boolean;
+  deleting: boolean;
+  onRequestDelete: (e: React.MouseEvent) => void;
+  onCancelDelete: (e: React.MouseEvent) => void;
+  onConfirmDelete: (e: React.MouseEvent) => void;
 }) {
   return (
     <motion.div
@@ -375,33 +426,76 @@ function SessionRow({
       exit={{ opacity: 0, x: -12 }}
       transition={{ type: "spring", stiffness: 220, damping: 26 }}
     >
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-current={active ? "true" : undefined}
+      <div
         className={cn(
-          "group flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors",
-          active
-            ? "bg-primary/5 text-primary"
-            : "text-charcoal hover:bg-surface hover:text-ink",
+          "group flex w-full items-center gap-1.5 rounded-md transition-colors",
+          confirming
+            ? "bg-destructive/5"
+            : active
+              ? "bg-primary/5"
+              : "hover:bg-surface",
         )}
       >
-        <MessageSquare
-          size={15}
-          aria-hidden
-          className={cn("shrink-0", active ? "text-primary" : "text-stone")}
-        />
-        <span className="min-w-0 flex-1 truncate text-body-sm">{session.title}</span>
-        <span
-          role="button"
-          tabIndex={-1}
-          onClick={onDelete}
-          aria-label="删除对话"
-          className="shrink-0 rounded p-0.5 text-stone opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-current={active ? "true" : undefined}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors",
+            active ? "text-primary" : "text-charcoal hover:text-ink",
+          )}
         >
-          <Trash2 size={14} aria-hidden />
-        </span>
-      </button>
+          <MessageSquare
+            size={15}
+            aria-hidden
+            className={cn("shrink-0", active ? "text-primary" : "text-stone")}
+          />
+          <span className="min-w-0 flex-1 truncate text-body-sm">{session.title}</span>
+        </button>
+
+        {confirming ? (
+          <div className="flex shrink-0 items-center gap-1 pr-1.5">
+            <span className="hidden text-micro text-destructive xl:inline">
+              确认删除?
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onConfirmDelete}
+              disabled={deleting}
+              className="h-7 gap-1 px-2 text-micro text-destructive hover:bg-destructive/10"
+            >
+              {deleting ? (
+                <Loader2 size={12} className="animate-spin" aria-hidden />
+              ) : (
+                <Trash2 size={12} aria-hidden />
+              )}
+              删除
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={onCancelDelete}
+              disabled={deleting}
+              aria-label="取消删除"
+              className="size-7 text-stone hover:text-ink"
+            >
+              <X size={13} aria-hidden />
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            aria-label={`删除对话：${session.title}`}
+            className="mr-2 shrink-0 rounded p-1 text-stone opacity-0 transition-all hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <Trash2 size={14} aria-hidden />
+          </button>
+        )}
+      </div>
     </motion.div>
   );
 }
@@ -409,13 +503,21 @@ function SessionRow({
 function HistoryItemRow({
   item,
   activeSessionId,
+  deleteConfirmSessionId,
+  deletingSessionId,
   onSelect,
-  onDelete,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
 }: {
   item: VirtualScrollItem<HistoryListItem>;
   activeSessionId: string | null;
+  deleteConfirmSessionId: string | null;
+  deletingSessionId: string | null;
   onSelect: (sessionId: string) => Promise<void>;
-  onDelete: (sessionId: string, e: React.MouseEvent) => Promise<void>;
+  onRequestDelete: (sessionId: string, e: React.MouseEvent) => void;
+  onCancelDelete: (e: React.MouseEvent) => void;
+  onConfirmDelete: (sessionId: string, e: React.MouseEvent) => Promise<void>;
 }) {
   const data = item.data;
 
@@ -431,8 +533,12 @@ function HistoryItemRow({
     <SessionRow
       session={data.session}
       active={activeSessionId === data.session.id}
+      confirming={deleteConfirmSessionId === data.session.id}
+      deleting={deletingSessionId === data.session.id}
       onSelect={() => void onSelect(data.session.id)}
-      onDelete={(event) => void onDelete(data.session.id, event)}
+      onRequestDelete={(event) => onRequestDelete(data.session.id, event)}
+      onCancelDelete={onCancelDelete}
+      onConfirmDelete={(event) => void onConfirmDelete(data.session.id, event)}
     />
   );
 }
@@ -547,6 +653,58 @@ function messageText(message: ChatUIMessage): string {
     .join("");
 }
 
+function getErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error && error.message
+      ? error.message
+      : typeof error === "string" && error
+        ? error
+        : "UNKNOWN_CHAT_ERROR";
+  return message.startsWith(ASSISTANT_ERROR_PREFIX)
+    ? message.slice(ASSISTANT_ERROR_PREFIX.length)
+    : message;
+}
+
+function formatAssistantError(error: unknown) {
+  return `${ASSISTANT_ERROR_PREFIX}${getErrorMessage(error)}`;
+}
+
+function upsertAssistantErrorMessage(
+  messages: ChatUIMessage[],
+  error: unknown,
+  activeSessionId: string | null,
+): ChatUIMessage[] {
+  const errorMessage = getErrorMessage(error);
+  const text = formatAssistantError(error);
+  const last = messages.at(-1);
+  const metadata = {
+    ...(last?.role === "assistant" ? last.metadata : {}),
+    ...(activeSessionId ? { conversationId: Number(activeSessionId) } : {}),
+    error: errorMessage,
+  };
+
+  if (last?.role === "assistant") {
+    return [
+      ...messages.slice(0, -1),
+      {
+        ...last,
+        parts: [{ type: "text", text }],
+        metadata,
+      },
+    ];
+  }
+
+  return [
+    ...messages,
+    {
+      id: `chat-error-${Date.now()}`,
+      role: "assistant",
+      parts: [{ type: "text", text }],
+      metadata,
+    },
+  ];
+}
+
 function MessageBubble({
   message,
   isStreaming,
@@ -556,6 +714,7 @@ function MessageBubble({
 }) {
   const text = messageText(message);
   const cited = message.metadata?.citedArticles;
+  const error = message.metadata?.error;
 
   if (message.role === "user") {
     return (
@@ -570,22 +729,49 @@ function MessageBubble({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex justify-start">
-        <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface px-4 py-3 text-body-md leading-relaxed text-charcoal">
-          <Streamdown
-            parseIncompleteMarkdown
-            animated
-            isAnimating={isStreaming}
-            plugins={{ mermaid }}
-            components={{
-              pre: ({ children, ...props }) => (
-                <CodeBlockWithCopy {...props}>{children}</CodeBlockWithCopy>
-              ),
-            }}
-            linkSafety={{ enabled: true }}
-            className="prose prose-sm max-w-none break-words text-charcoal prose-headings:text-ink prose-strong:text-ink prose-a:text-primary prose-code:text-ink"
-          >
-            {text}
-          </Streamdown>
+        <div
+          className={cn(
+            "max-w-[85%] rounded-2xl rounded-tl-sm px-4 py-3 text-body-md leading-relaxed",
+            error
+              ? "border border-destructive/25 bg-destructive/5 text-destructive"
+              : "bg-surface text-charcoal",
+          )}
+        >
+          {error ? (
+            <div className="flex gap-2.5">
+              <AlertCircle
+                size={18}
+                aria-hidden
+                className="mt-0.5 shrink-0 text-destructive"
+              />
+              <div className="min-w-0 space-y-1">
+                <p className="break-words text-body-sm-medium text-destructive">
+                  {text || "生成回复时出现错误。"}
+                </p>
+                {error && error !== text && (
+                  <p className="break-words text-caption text-destructive/80">
+                    {error}
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <Streamdown
+              parseIncompleteMarkdown
+              animated
+              isAnimating={isStreaming}
+              plugins={{ mermaid }}
+              components={{
+                pre: ({ children, ...props }) => (
+                  <CodeBlockWithCopy {...props}>{children}</CodeBlockWithCopy>
+                ),
+              }}
+              linkSafety={{ enabled: true }}
+              className="prose prose-sm max-w-none break-words text-charcoal prose-headings:text-ink prose-strong:text-ink prose-a:text-primary prose-code:text-ink"
+            >
+              {text}
+            </Streamdown>
+          )}
         </div>
       </div>
       {cited && cited.length > 0 && <SourceCitations articles={cited} />}

@@ -1,10 +1,13 @@
 import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
 
+export type ChatApiMode = "chat_completions" | "responses";
+
 export type ChatConfigPlanInput = {
   kind: "chat";
   baseUrl: string;
   apiKey: string;
   model: string;
+  chatApiMode: ChatApiMode;
   temperature: number;
 };
 
@@ -21,6 +24,7 @@ export type ParsedAIConfigPlanInput = {
     baseUrl: string;
     apiKey?: string;
     model: string;
+    chatApiMode?: ChatApiMode;
     temperature: number;
   };
   embedding: {
@@ -40,6 +44,7 @@ export function buildNextAIConfigPlan(
     baseUrl: parsed.chat.baseUrl,
     apiKey: nextApiKey(parsed.chat.apiKey, existingChat.apiKey),
     model: parsed.chat.model,
+    chatApiMode: parsed.chat.chatApiMode ?? existingChat.chatApiMode,
     temperature: parsed.chat.temperature,
   };
 

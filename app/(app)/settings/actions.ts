@@ -43,7 +43,7 @@ import {
 } from "@/lib/db/schema";
 import { getActiveInterestProfile, saveInterestProfile } from "@/lib/interests/profile";
 import {
-  enqueueAnalysisForCurrentCandidates,
+  enqueueAnalysisForSelectedCandidates,
   enqueueArticleEmbedding,
 } from "@/lib/jobs/feed-jobs";
 
@@ -135,6 +135,7 @@ const testAIConnectionSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().optional(),
   model: z.string().min(1),
+  chatApiMode: z.enum(["chat_completions", "responses"]).optional(),
 });
 
 export type TestAIConnectionState =
@@ -162,13 +163,21 @@ export async function testAIConnection(
       fetch:
         parsed.kind === "embedding"
           ? createAIRequestFetch({ nvidiaEmbeddingInputType: "query" })
-          : aiRequestFetch,
+          : createAIRequestFetch({
+              nvidiaChatTemplateKwargs: {
+                thinking: true,
+                reasoning_effort: "high",
+              },
+            }),
     });
 
     if (parsed.kind === "chat") {
       const { generateText } = await import("ai");
       await generateText({
-        model: provider(parsed.model),
+        model:
+          parsed.chatApiMode === "responses"
+            ? provider.responses(parsed.model)
+            : provider.chat(parsed.model),
         prompt: "Reply with exactly: pong",
         maxOutputTokens: 64,
       });
@@ -184,7 +193,7 @@ export async function testAIConnection(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "连接失败。",
+      message: formatAIConnectionError(error),
     };
   }
 }
@@ -446,7 +455,9 @@ export async function saveInterestProfileSettings(
   try {
     const parsed = saveInterestProfileSchema.parse(input);
     const { profile, changed } = await saveInterestProfile(parsed.content);
-    const enqueued = changed ? await enqueueAnalysisForCurrentCandidates() : 0;
+    const enqueued = changed
+      ? (await enqueueAnalysisForSelectedCandidates()).enqueuedAnalysisCount
+      : 0;
     revalidatePath("/settings");
 
     return {
@@ -581,4 +592,57 @@ function parseModelCapabilities(payload: unknown, fallbackKind: AIConfigKind) {
   return Array.from(byModel.values()).sort((a, b) =>
     a.model.localeCompare(b.model),
   );
+}
+
+function formatAIConnectionError(error: unknown) {
+  const details = apiCallErrorDetails(error);
+  if (details) {
+    return details;
+  }
+
+  return error instanceof Error ? error.message : "连接失败。";
+}
+
+function apiCallErrorDetails(error: unknown) {
+  if (!isRecord(error)) return null;
+
+  const message =
+    typeof error.message === "string" && error.message
+      ? error.message
+      : "AI provider request failed";
+  const url = typeof error.url === "string" ? error.url : null;
+  const statusCode =
+    typeof error.statusCode === "number" ? String(error.statusCode) : null;
+  const responseHeaders = isRecord(error.responseHeaders)
+    ? error.responseHeaders
+    : null;
+  const contentType =
+    typeof responseHeaders?.["content-type"] === "string"
+      ? responseHeaders["content-type"]
+      : null;
+  const responseBody =
+    typeof error.responseBody === "string" ? error.responseBody : null;
+
+  if (!url && !statusCode && !contentType && !responseBody) {
+    return null;
+  }
+
+  return [
+    message,
+    url ? `url=${url}` : null,
+    statusCode ? `status=${statusCode}` : null,
+    contentType ? `content-type=${contentType}` : null,
+    responseBody ? `body-preview=${previewBody(responseBody)}` : null,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join("; ");
+}
+
+function previewBody(value: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 240 ? `${compact.slice(0, 240)}...` : compact;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

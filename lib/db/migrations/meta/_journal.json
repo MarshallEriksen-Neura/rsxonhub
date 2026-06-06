@@ -64,6 +64,13 @@
       "when": 1780654324510,
       "tag": "0009_bored_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780666188559,
+      "tag": "0010_kind_sinister_six",
+      "breakpoints": true
     }
   ]
 }

@@ -47,6 +47,15 @@ export function buildRagSystemPrompt(ctx: RagContext): string {
   return `${RAG_SYSTEM_BASE}\n\n【参考内容】\n${refs}`;
 }
 
+export const CHAT_CONTEXT_COMPRESSION_SYSTEM = `你是聊天上下文压缩器。
+任务：把较早的对话历史压缩成后续回答可用的中文上下文摘要。
+规则：
+- 保留用户长期偏好、明确目标、尚未完成的任务、关键事实、约束、决定和引用线索。
+- 删除寒暄、重复内容、已经解决且不影响后续的问题。
+- 不要引入原文没有的信息。
+- 用短小分组输出，控制在 2000 字以内。
+- 如果历史中有工具结果或来源线索，保留标题、来源名或 ID。`;
+
 /** 文章摘要生成（见 article-analysis.ts，此处存 system prompt 字符串供统一管理）。 */
 export const ARTICLE_SUMMARY_SYSTEM =
   "你是单用户 RSS 阅读器的文章分析器。只基于给定文章证据输出摘要、要点、标签和重要度；不要引入外部事实。";
