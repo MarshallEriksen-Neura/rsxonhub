@@ -45,6 +45,19 @@ function DrawerBackdrop({
   )
 }
 
+function DrawerViewport({
+  className,
+  ...props
+}: React.ComponentProps<typeof BaseDrawer.Viewport>) {
+  return (
+    <BaseDrawer.Viewport
+      data-slot="drawer-viewport"
+      className={cn("fixed inset-0 z-50 pointer-events-none", className)}
+      {...props}
+    />
+  )
+}
+
 type DrawerContentProps = React.ComponentProps<typeof BaseDrawer.Popup> & {
   side?: "top" | "right" | "bottom" | "left";
 };
@@ -58,22 +71,29 @@ function DrawerContent({
   return (
     <DrawerPortal data-slot="drawer-portal">
       <DrawerBackdrop />
-      <BaseDrawer.Popup
-        data-slot="drawer-content"
-        data-side={side}
-        className={cn(
-          "group/drawer-content bg-background fixed z-50 flex h-auto flex-col",
-          "data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:mb-24 data-[side=top]:max-h-[80vh] data-[side=top]:rounded-b data-[side=top]:border-b-2",
-          "data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:mt-24 data-[side=bottom]:max-h-[80vh] data-[side=bottom]:rounded-t data-[side=bottom]:border-t-2",
-          "data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:w-3/4 data-[side=right]:border-l-2 data-[side=right]:sm:max-w-sm",
-          "data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:w-3/4 data-[side=left]:border-r-2 data-[side=left]:sm:max-w-sm",
-          className
-        )}
-        {...props}
-      >
-        <div className="bg-foreground mx-auto mt-4 hidden h-1 w-[60px] shrink-0 rounded-full group-data-[side=bottom]/drawer-content:block" />
-        {children}
-      </BaseDrawer.Popup>
+      <DrawerViewport>
+        <BaseDrawer.Popup
+          data-slot="drawer-content"
+          data-side={side}
+          className={cn(
+            "group/drawer-content bg-background fixed z-50 flex h-auto flex-col pointer-events-auto",
+            "data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:mb-24 data-[side=top]:max-h-[80vh] data-[side=top]:rounded-b data-[side=top]:border-b-2",
+            "data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:mt-24 data-[side=bottom]:max-h-[80vh] data-[side=bottom]:rounded-t data-[side=bottom]:border-t-2",
+            "data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:w-3/4 data-[side=right]:border-l-2 data-[side=right]:sm:max-w-sm",
+            "data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:w-3/4 data-[side=left]:border-r-2 data-[side=left]:sm:max-w-sm",
+            className
+          )}
+          {...props}
+        >
+          <div className="bg-foreground mx-auto mt-4 hidden h-1 w-[60px] shrink-0 rounded-full group-data-[side=bottom]/drawer-content:block" />
+          <BaseDrawer.Content
+            data-slot="drawer-content-body"
+            className="flex min-h-0 flex-1 flex-col overflow-auto"
+          >
+            {children}
+          </BaseDrawer.Content>
+        </BaseDrawer.Popup>
+      </DrawerViewport>
     </DrawerPortal>
   )
 }
@@ -131,6 +151,7 @@ const DrawerComponent = Object.assign(Drawer, {
     Trigger: DrawerTrigger,
     Portal: DrawerPortal,
     Backdrop: DrawerBackdrop,
+    Viewport: DrawerViewport,
     Close: DrawerClose,
     Content: DrawerContent,
     Header: DrawerHeader,

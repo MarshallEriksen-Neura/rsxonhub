@@ -39,6 +39,22 @@ describe("parseArticleAnalysisText", () => {
     });
   });
 
+  test("recovers model JSON with unescaped quotes inside the summary string", () => {
+    expect(
+      parseArticleAnalysisText(`{
+  "summary": "Google AI Edge Gallery 新增了"计划通知"功能，并扩展了端侧 AI 能力。",
+  "bullets": ["新增实验性 MCP 支持", "Gemma 4 可以协调外部数据源"],
+  "tags": ["Google", "端侧 AI", "MCP"],
+  "importance": 72
+}`),
+    ).toEqual({
+      summary: 'Google AI Edge Gallery 新增了"计划通知"功能，并扩展了端侧 AI 能力。',
+      bullets: ["新增实验性 MCP 支持", "Gemma 4 可以协调外部数据源"],
+      tags: ["Google", "端侧 AI", "MCP"],
+      importance: 72,
+    });
+  });
+
   test("rejects JSON that does not match the article analysis schema", () => {
     expect(() =>
       parseArticleAnalysisText(

@@ -10,6 +10,7 @@ import { Button } from "@/components/retroui/Button";
 import { VirtualScroll, useVirtualScroll } from "./virtual-scroll";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { setFeedArticleUrlParam } from "./feed-url-state";
 
 // 重要性徽章变体配置
 const importanceVariantMap: Record<Importance, "outline" | "surface" | "default"> = {
@@ -205,7 +206,10 @@ export function ArticleList() {
           <ArticleListItem
             article={item.data}
             active={selectedArticleId === item.data.id}
-            onSelect={() => selectArticle(item.data.id)}
+            onSelect={() => {
+              selectArticle(item.data.id);
+              setFeedArticleUrlParam(item.data.id);
+            }}
           />
         )}
       />

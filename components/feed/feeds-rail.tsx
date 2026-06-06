@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useFeedStore, type FeedNavItem, type FeedView } from "@/lib/stores/feed";
 import { AddFeedDialog } from "./add-feed-dialog";
 import { Button } from "@/components/retroui/Button";
+import { setFeedArticleUrlParam } from "./feed-url-state";
 
 /**
  * /feed 左栏 · 订阅源侧边栏。
@@ -69,7 +70,10 @@ export function FeedsRail() {
             key={key}
             type="button"
             variant="ghost"
-            onClick={() => setView(key)}
+            onClick={() => {
+              setView(key);
+              setFeedArticleUrlParam(null);
+            }}
             aria-current={view === key ? "true" : undefined}
             className={cn(
               "w-full justify-start gap-2.5 px-3 py-2 text-body-sm",
@@ -120,7 +124,10 @@ export function FeedsRail() {
                     key={feed.id}
                     type="button"
                     variant="ghost"
-                    onClick={() => selectFeed(feed.id)}
+                    onClick={() => {
+                      selectFeed(feed.id);
+                      setFeedArticleUrlParam(null);
+                    }}
                     className={cn(
                       "w-full justify-between px-3 py-2 text-body-sm",
                       selectedFeedId === feed.id

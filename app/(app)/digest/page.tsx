@@ -62,9 +62,9 @@ export default async function DigestPage() {
 
         {/* ── Lede: the briefing itself, hero editorial ── */}
         {!data ? (
-          <section className="flex flex-col items-center gap-2 border border-dashed border-hairline bg-surface-soft px-6 py-10 text-center">
-            <h2 className="text-heading-5 text-ink">今天的简报还没有生成</h2>
-            <p className="max-w-md text-body-sm leading-relaxed text-steel">
+          <section className="border border-dashed border-hairline bg-surface-soft px-6 py-10 text-center">
+            <h2 className="mb-2 text-heading-5 text-ink">今天的简报还没有生成</h2>
+            <p className="mx-auto max-w-md text-body-sm leading-relaxed text-steel">
               后台 worker 会从兴趣画像和检索候选中生成日报。请确认订阅源已抓取、兴趣画像已保存,并运行 worker。
             </p>
           </section>
