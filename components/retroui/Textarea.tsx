@@ -1,11 +1,11 @@
 import { cn } from "@/lib/utils";
+import type { TextareaHTMLAttributes } from "react";
 
 export function Textarea({
-  type = "text",
   placeholder = "Enter text...",
   className = "",
   ...props
-}) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
       placeholder={placeholder}

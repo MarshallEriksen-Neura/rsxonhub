@@ -11,6 +11,18 @@ describe("AI model preset capability inference", () => {
     });
   });
 
+  test("classifies reranker model names as retrieval models before qwen chat family", () => {
+    expect(inferModelCapabilities("Qwen3-Reranker-4B", undefined, "chat")).toEqual({
+      supportsChat: false,
+      supportsEmbedding: true,
+    });
+
+    expect(inferModelCapabilities("Qwen3-VL-Reranker-8B", undefined, "chat")).toEqual({
+      supportsChat: false,
+      supportsEmbedding: true,
+    });
+  });
+
   test("classifies common instruct and chat models as chat models", () => {
     expect(
       inferModelCapabilities("mistralai/mistral-7b-instruct", undefined, "embedding"),

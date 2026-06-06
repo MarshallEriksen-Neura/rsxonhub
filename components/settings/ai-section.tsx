@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
+  AlertCircle,
   BrainCircuit,
   Check,
   Database,
@@ -9,7 +11,6 @@ import {
   EyeOff,
   Info,
   Loader2,
-  Lock,
   MessageSquare,
   Search,
   Wifi,
@@ -79,6 +80,7 @@ export function AISection({
   initialModelPresets,
   latestRebuild,
 }: AISectionProps) {
+  const router = useRouter();
   const [savedConfig, setSavedConfig] = useState(initialConfig);
   const [chat, setChat] = useState<ChatDraft>(() => ({
     baseUrl: initialConfig.chat.baseUrl,
@@ -101,6 +103,11 @@ export function AISection({
   );
   const [dirty, setDirty] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [saveKind, setSaveKind] = useState<"save" | "rebuild" | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{
+    tone: "info" | "success" | "error";
+    message: string;
+  } | null>(null);
   const [modelFetchKind, setModelFetchKind] = useState<"chat" | "embedding" | null>(null);
   const [testKind, setTestKind] = useState<"chat" | "embedding" | null>(null);
   const [modelSearch, setModelSearch] = useState("");
@@ -245,57 +252,74 @@ export function AISection({
   };
 
   const save = (confirmEmbeddingRebuild = false) => {
-    startTransition(async () => {
-      const result = await saveAISettings({
-        chat,
-        embedding,
-        confirmEmbeddingRebuild,
-      });
+    setSaveKind(confirmEmbeddingRebuild ? "rebuild" : "save");
+    setStatusMessage({
+      tone: "info",
+      message: confirmEmbeddingRebuild
+        ? "正在保存 AI 配置并创建向量重建任务..."
+        : "正在保存 AI 配置...",
+    });
 
-      if (!result.ok) {
-        if ("kind" in result && result.kind === "embedding-rebuild-required") {
-          setPendingRebuild({
-            message: result.message,
-            existingChunkCount: result.existingChunkCount,
-            probedDimension: result.probedDimension,
-            expectedDimension: result.expectedDimension,
-          });
+    startTransition(async () => {
+      try {
+        const result = await saveAISettings({
+          chat,
+          embedding,
+          confirmEmbeddingRebuild,
+        });
+
+        if (!result.ok) {
+          if ("kind" in result && result.kind === "embedding-rebuild-required") {
+            setPendingRebuild({
+              message: result.message,
+              existingChunkCount: result.existingChunkCount,
+              probedDimension: result.probedDimension,
+              expectedDimension: result.expectedDimension,
+            });
+            setStatusMessage(null);
+            return;
+          }
+          setStatusMessage({ tone: "error", message: result.message });
+          toast.error(result.message);
           return;
         }
-        toast.error(result.message);
-        return;
-      }
 
-      setSavedConfig(result.config);
-      setChat((current) => ({
-        ...current,
-        apiKey: "",
-        baseUrl: result.config.chat.baseUrl,
-        model: result.config.chat.model,
-        chatApiMode: result.config.chat.chatApiMode,
-        temperature: result.config.chat.temperature,
-      }));
-      setEmbedding((current) => ({
-        ...current,
-        apiKey: "",
-        baseUrl: result.config.embedding.baseUrl,
-        model: result.config.embedding.model,
-        dimension: result.config.embedding.dimension,
-      }));
-      setChatModels((current) =>
-        mergeModelCapabilities([
-          capabilityForModel(result.config.chat.model, "chat"),
+        setSavedConfig(result.config);
+        setChat((current) => ({
           ...current,
-        ]),
-      );
-      setEmbeddingModels((current) =>
-        mergeModelCapabilities([
-          capabilityForModel(result.config.embedding.model, "embedding"),
+          apiKey: "",
+          baseUrl: result.config.chat.baseUrl,
+          model: result.config.chat.model,
+          chatApiMode: result.config.chat.chatApiMode,
+          temperature: result.config.chat.temperature,
+        }));
+        setEmbedding((current) => ({
           ...current,
-        ]),
-      );
-      setDirty(false);
-      toast.success(result.message);
+          apiKey: "",
+          baseUrl: result.config.embedding.baseUrl,
+          model: result.config.embedding.model,
+          dimension: result.config.embedding.dimension,
+        }));
+        setChatModels((current) =>
+          mergeModelCapabilities([
+            capabilityForModel(result.config.chat.model, "chat"),
+            ...current,
+          ]),
+        );
+        setEmbeddingModels((current) =>
+          mergeModelCapabilities([
+            capabilityForModel(result.config.embedding.model, "embedding"),
+            ...current,
+          ]),
+        );
+        setDirty(false);
+        setPendingRebuild(null);
+        setStatusMessage({ tone: "success", message: result.message });
+        router.refresh();
+        toast.success(result.message);
+      } finally {
+        setSaveKind(null);
+      }
     });
   };
 
@@ -311,7 +335,7 @@ export function AISection({
             onClick={() => save(false)}
             className="gap-1.5"
           >
-            {isPending ? (
+            {saveKind === "save" ? (
               <Loader2 size={15} aria-hidden className="animate-spin" />
             ) : (
               <Check size={15} aria-hidden />
@@ -322,6 +346,29 @@ export function AISection({
       />
 
 
+      {statusMessage ? (
+        <div
+          role="status"
+          className={cn(
+            "mb-5 flex items-center gap-2 rounded-md border px-3 py-2 text-body-sm",
+            statusMessage.tone === "error"
+              ? "border-destructive/40 bg-destructive/5 text-destructive"
+              : statusMessage.tone === "success"
+                ? "border-primary/30 bg-primary/8 text-charcoal"
+                : "border-hairline bg-surface text-charcoal",
+          )}
+        >
+          {statusMessage.tone === "info" ? (
+            <Loader2 size={15} aria-hidden className="animate-spin" />
+          ) : statusMessage.tone === "success" ? (
+            <Check size={15} aria-hidden />
+          ) : (
+            <AlertCircle size={15} aria-hidden />
+          )}
+          <span>{statusMessage.message}</span>
+        </div>
+      ) : null}
+
       {pendingRebuild ? (
         <div className="mb-5 flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-body-sm text-charcoal">
           <div className="font-medium text-destructive">需要重建向量索引</div>
@@ -330,10 +377,20 @@ export function AISection({
             现有 {pendingRebuild.existingChunkCount} 个 chunks · 新模型维度 {pendingRebuild.probedDimension} · 当前索引维度 {pendingRebuild.expectedDimension}
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={() => save(true)} disabled={isPending}>
-              保存并重建向量
+            <Button size="sm" onClick={() => save(true)} disabled={isPending} className="gap-1.5">
+              {saveKind === "rebuild" ? (
+                <Loader2 size={14} aria-hidden className="animate-spin" />
+              ) : (
+                <Database size={14} aria-hidden />
+              )}
+              {saveKind === "rebuild" ? "保存并入队中" : "保存并重建向量"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPendingRebuild(null)}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isPending}
+              onClick={() => setPendingRebuild(null)}
+            >
               取消
             </Button>
           </div>

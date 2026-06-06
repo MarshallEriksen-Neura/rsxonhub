@@ -116,6 +116,39 @@ type VirtualScrollFetcher<T> = (
   cursor?: string | null,
 ) => Promise<VirtualScrollFetchResult<T>>;
 
+function getVirtualItemId<T>(data: T, page: number, index: number) {
+  if (data && typeof data === "object" && "id" in data) {
+    const id = (data as { id?: string | number }).id;
+    if (typeof id === "string" || typeof id === "number") return id;
+  }
+
+  return `${page}-${index}`;
+}
+
+function toVirtualItems<T>(data: T[], page: number): VirtualScrollItem<T>[] {
+  return data.map((item, index) => ({
+    id: getVirtualItemId(item, page, index),
+    data: item,
+  }));
+}
+
+function mergeVirtualItems<T>(
+  current: VirtualScrollItem<T>[],
+  incoming: VirtualScrollItem<T>[],
+  direction: "down" | "up",
+) {
+  const seen = new Set(current.map((item) => item.id));
+  const dedupedIncoming = incoming.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+
+  return direction === "up"
+    ? [...dedupedIncoming, ...current]
+    : [...current, ...dedupedIncoming];
+}
+
 // ── 组件实现 ──
 
 export function VirtualScroll<T = unknown>({
@@ -415,6 +448,7 @@ export function useVirtualScroll<T = unknown>(options?: {
     error: null,
   });
   const nextCursorRef = React.useRef<string | null>(null);
+  const activeLoadRef = React.useRef<"initial" | "more" | null>(null);
 
   const pageSize = options?.pageSize ?? 20;
   const loadDirection = options?.loadDirection ?? "down";
@@ -422,14 +456,12 @@ export function useVirtualScroll<T = unknown>(options?: {
   // 加载第一页
   const loadInitial = React.useCallback(
     async (fetcher: VirtualScrollFetcher<T>) => {
+      activeLoadRef.current = "initial";
       setState((s) => ({ ...s, isLoading: true, error: null }));
       nextCursorRef.current = null;
       try {
         const result = await fetcher(1, pageSize, null);
-        const newItems: VirtualScrollItem<T>[] = result.data.map((data, index) => ({
-          id: `1-${index}`,
-          data,
-        }));
+        const newItems = toVirtualItems(result.data, 1);
         setItems(newItems);
         nextCursorRef.current = result.nextCursor ?? null;
         setState({
@@ -447,6 +479,10 @@ export function useVirtualScroll<T = unknown>(options?: {
           isEmpty: true,
           error: err instanceof Error ? err.message : "加载失败",
         });
+      } finally {
+        if (activeLoadRef.current === "initial") {
+          activeLoadRef.current = null;
+        }
       }
     },
     [pageSize],
@@ -456,20 +492,17 @@ export function useVirtualScroll<T = unknown>(options?: {
   const loadMore = React.useCallback(
     async (fetcher: VirtualScrollFetcher<T>) => {
       if (state.isLoadingMore || !state.hasMore) return;
+      if (activeLoadRef.current !== null) return;
 
+      activeLoadRef.current = "more";
       setState((s) => ({ ...s, isLoadingMore: true }));
       try {
         const nextPage = (Math.ceil(items.length / pageSize) || 1) + 1;
         const result = await fetcher(nextPage, pageSize, nextCursorRef.current);
-        const newItems: VirtualScrollItem<T>[] = result.data.map((data, index) => ({
-          id: `${nextPage}-${index}`,
-          data,
-        }));
+        const newItems = toVirtualItems(result.data, nextPage);
         nextCursorRef.current = result.nextCursor ?? null;
         setItems((prev) =>
-          loadDirection === "up"
-            ? [...newItems, ...prev]
-            : [...prev, ...newItems],
+          mergeVirtualItems(prev, newItems, loadDirection),
         );
         setState((s) => ({
           ...s,
@@ -482,6 +515,10 @@ export function useVirtualScroll<T = unknown>(options?: {
           isLoadingMore: false,
           error: err instanceof Error ? err.message : "加载更多失败",
         }));
+      } finally {
+        if (activeLoadRef.current === "more") {
+          activeLoadRef.current = null;
+        }
       }
     },
     [

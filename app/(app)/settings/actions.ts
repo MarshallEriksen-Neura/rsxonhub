@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { aiRequestFetch, createAIRequestFetch } from "@/lib/ai";
+import { probeChatCompletionsConnection } from "@/lib/ai/chat-completions-probe";
 import {
   getAIConfig,
   getChatConfig,
@@ -83,7 +84,7 @@ export async function saveAISettings(
     let rebuildRunId: number | null = null;
 
     if (embeddingChanged) {
-      const probedDimension = await probeEmbeddingDimension();
+      const probedDimension = await probeEmbeddingDimension(embedding);
       embeddingToSave = { ...embedding, dimension: probedDimension };
       const [{ count }] = await db
         .select({ count: sql<number>`count(*)` })
@@ -181,15 +182,20 @@ export async function testAIConnection(
     });
 
     if (parsed.kind === "chat") {
-      const { generateText } = await import("ai");
-      await generateText({
-        model:
-          parsed.chatApiMode === "responses"
-            ? provider.responses(parsed.model)
-            : provider.chat(parsed.model),
-        prompt: "Reply with exactly: pong",
-        maxOutputTokens: 64,
-      });
+      if (parsed.chatApiMode === "responses") {
+        const { generateText } = await import("ai");
+        await generateText({
+          model: provider.responses(parsed.model),
+          prompt: "Reply with exactly: pong",
+          maxOutputTokens: 64,
+        });
+      } else {
+        await probeChatCompletionsConnection({
+          baseUrl: parsed.baseUrl,
+          apiKey,
+          model: parsed.model,
+        });
+      }
       return { ok: true, message: "对话模型连接成功。" };
     } else {
       const { embed } = await import("ai");
@@ -281,7 +287,7 @@ export async function fetchAIModels(
       };
     }
 
-    await upsertAIModelPresets(parsed.kind, parsed.baseUrl, models);
+    await replaceAIModelPresets(parsed.kind, parsed.baseUrl, models);
     revalidatePath("/settings");
 
     return {
@@ -321,37 +327,40 @@ async function getAIModelPresets(kind: AIConfigKind, baseUrl: string) {
   }));
 }
 
-async function upsertAIModelPresets(
+async function replaceAIModelPresets(
+  kind: AIConfigKind,
+  baseUrl: string,
+  models: AIModelCapability[],
+) {
+  const values = buildAIModelPresetRows(kind, baseUrl, models);
+
+  await db.transaction(async (tx) => {
+    await tx.delete(aiModelPresets).where(
+      and(
+        eq(aiModelPresets.kind, kind),
+        eq(aiModelPresets.baseUrl, normalizeBaseUrl(baseUrl)),
+      ),
+    );
+
+    await tx.insert(aiModelPresets).values(values);
+  });
+}
+
+function buildAIModelPresetRows(
   kind: AIConfigKind,
   baseUrl: string,
   models: AIModelCapability[],
 ) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
 
-  await db
-    .insert(aiModelPresets)
-    .values(
-      models.map((model) => ({
-        kind,
-        baseUrl: normalizedBaseUrl,
-        model: model.model,
-        supportsChat: model.supportsChat,
-        supportsEmbedding: model.supportsEmbedding,
-        lastFetchedAt: sql`now()`,
-      })),
-    )
-    .onConflictDoUpdate({
-      target: [
-        aiModelPresets.kind,
-        aiModelPresets.baseUrl,
-        aiModelPresets.model,
-      ],
-      set: {
-        supportsChat: sql`excluded.supports_chat`,
-        supportsEmbedding: sql`excluded.supports_embedding`,
-        lastFetchedAt: sql`now()`,
-      },
-    });
+  return models.map((model) => ({
+    kind,
+    baseUrl: normalizedBaseUrl,
+    model: model.model,
+    supportsChat: model.supportsChat,
+    supportsEmbedding: model.supportsEmbedding,
+    lastFetchedAt: sql`now()`,
+  }));
 }
 
 const changePasswordSchema = z

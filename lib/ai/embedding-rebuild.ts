@@ -4,7 +4,7 @@ import {
   embeddingModelWithConfig,
   withAIRequestRetry,
 } from "@/lib/ai";
-import { getEmbeddingConfig } from "@/lib/ai/config";
+import { getEmbeddingConfig, type EmbeddingRuntimeConfig } from "@/lib/ai/config";
 import { chunkArticleText, expectedEmbeddingDimension } from "@/lib/ai/embedding-text";
 import { db } from "@/lib/db";
 import {
@@ -25,8 +25,8 @@ export type EmbeddingChangeCheck = {
   requiresRebuild: boolean;
 };
 
-export async function probeEmbeddingDimension() {
-  const { model } = await embeddingModelWithConfig("query");
+export async function probeEmbeddingDimension(config?: EmbeddingRuntimeConfig) {
+  const { model } = await embeddingModelWithConfig("query", config);
   const result = await withAIRequestRetry(() =>
     embed({
       model,

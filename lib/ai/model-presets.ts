@@ -17,6 +17,8 @@ const EMBEDDING_PATTERNS = [
   "embedding",
   "embed",
   "embeddings",
+  "rerank",
+  "reranker",
   "text-embedding",
   "bge",
   "e5",

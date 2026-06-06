@@ -1,5 +1,9 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { getChatConfig, getEmbeddingConfig } from "@/lib/ai/config";
+import {
+  getChatConfig,
+  getEmbeddingConfig,
+  type EmbeddingRuntimeConfig,
+} from "@/lib/ai/config";
 import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
 import { createAIRequestFetch } from "@/lib/ai/proxy-fetch";
 import {
@@ -47,8 +51,11 @@ export async function embeddingModel(inputType: "passage" | "query" = "query") {
   return model;
 }
 
-export async function embeddingModelWithConfig(inputType: "passage" | "query" = "query") {
-  const config = await getEmbeddingConfig();
+export async function embeddingModelWithConfig(
+  inputType: "passage" | "query" = "query",
+  configOverride?: EmbeddingRuntimeConfig,
+) {
+  const config = configOverride ?? await getEmbeddingConfig();
   assertConfiguredApiKey("向量模型", config.apiKey);
 
   const model = createOpenAI({
