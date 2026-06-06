@@ -11,6 +11,11 @@ export type AIModelPresetSnapshot = {
   embedding: AIModelCapability[];
 };
 
+export type ChatModelSelectionSnapshot = {
+  defaultModel: string;
+  models: string[];
+};
+
 type ModelMetadata = Record<string, unknown>;
 
 const EMBEDDING_PATTERNS = [
@@ -81,6 +86,35 @@ export function inferModelCapabilities(
     supportsChat,
     supportsEmbedding,
   };
+}
+
+export function buildChatModelSelectionSnapshot(
+  defaultModel: string,
+  presets: AIModelCapability[],
+): ChatModelSelectionSnapshot {
+  const normalizedDefault = defaultModel.trim();
+  const availableModels = presets
+    .filter((preset) => preset.supportsChat)
+    .map((preset) => preset.model.trim())
+    .filter(Boolean)
+    .filter((model) => model !== normalizedDefault)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    defaultModel: normalizedDefault,
+    models: [normalizedDefault, ...new Set(availableModels)],
+  };
+}
+
+export function resolveChatModelSelection(
+  requestedModel: string | null | undefined,
+  snapshot: ChatModelSelectionSnapshot,
+) {
+  const normalized = requestedModel?.trim();
+  if (!normalized) return snapshot.defaultModel;
+  if (snapshot.models.includes(normalized)) return normalized;
+
+  throw new Error(`INVALID_CHAT_MODEL: ${normalized}`);
 }
 
 function searchableModelText(model: string, metadata: ModelMetadata | undefined) {

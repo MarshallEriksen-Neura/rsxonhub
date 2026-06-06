@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
+  Bot,
   FileText,
   Plus,
   MessageSquare,
@@ -15,6 +16,8 @@ import {
   AlertCircle,
   Loader2,
   X,
+  ChevronDown,
+  Brain,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useChat } from "@ai-sdk/react";
@@ -25,16 +28,20 @@ import "streamdown/styles.css";
 import { mermaid } from "@streamdown/mermaid";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/retroui/Button";
+import { Select } from "@/components/retroui/Select";
 import {
   VirtualScroll,
   useVirtualScroll,
   type VirtualScrollItem,
 } from "@/components/feed/virtual-scroll";
 import type { CitedArticle } from "@/lib/ai/rag";
+import type { ChatModelSelectionSnapshot } from "@/lib/ai/model-presets";
 import type {
   ChatUIMessage,
   ConversationSummary,
 } from "@/lib/chat/types";
+import { useChatStore } from "@/lib/stores/chat";
+import { ArticlePreviewPanel } from "@/components/chat/article-preview-panel";
 
 /**
  * RAG 问答面板 — Manus 风格双栏布局
@@ -94,13 +101,24 @@ function toHistoryItems(sessions: ChatSession[]): VirtualScrollItem<HistoryListI
   ]);
 }
 
-export function ChatPanel() {
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+export function ChatPanel({
+  modelSelection,
+}: {
+  modelSelection: ChatModelSelectionSnapshot;
+}) {
   const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState<string | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
+  const storedModel = useChatStore((state) => state.selectedModel);
+  const setSelectedModel = useChatStore((state) => state.setSelectedModel);
+  const activeSessionId = useChatStore((state) => state.activeSessionId);
+  const setActiveSessionId = useChatStore((state) => state.setActiveSessionId);
+  const selectedModel = modelSelection.models.includes(storedModel ?? "")
+    ? storedModel!
+    : modelSelection.defaultModel;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const restoredSessionIdRef = useRef<string | null>(null);
 
   const {
     items: conversationItems,
@@ -171,6 +189,25 @@ export function ChatPanel() {
   const isLoading = status === "streaming" || status === "submitted";
   const hasMessages = messages.length > 0;
 
+  const loadSessionMessages = useCallback(
+    async (sessionId: string) => {
+      const response = await fetch(`/api/chat/conversations/${sessionId}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          setActiveSessionId(null);
+        }
+        return false;
+      }
+
+      const data = (await response.json()) as { messages: ChatUIMessage[] };
+      setMessages(data.messages);
+      return true;
+    },
+    [setActiveSessionId, setMessages],
+  );
+
   const sessions = useMemo(
     () => conversationItems.map((item) => item.data),
     [conversationItems],
@@ -181,23 +218,39 @@ export function ChatPanel() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
+  useEffect(() => {
+    if (!activeSessionId) {
+      restoredSessionIdRef.current = null;
+      return;
+    }
+    if (
+      hasMessages ||
+      isLoading ||
+      restoredSessionIdRef.current === activeSessionId
+    ) {
+      return;
+    }
+
+    restoredSessionIdRef.current = activeSessionId;
+    void loadSessionMessages(activeSessionId);
+  }, [activeSessionId, hasMessages, isLoading, loadSessionMessages]);
+
   const createNewSession = useCallback(() => {
     setMessages([]);
     setActiveSessionId(null);
     setDeleteConfirmSessionId(null);
     setInput("");
-  }, [setMessages]);
+  }, [setActiveSessionId, setMessages]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
       setDeleteConfirmSessionId(null);
-      const response = await fetch(`/api/chat/conversations/${sessionId}`);
-      if (!response.ok) return;
-      const data = (await response.json()) as { messages: ChatUIMessage[] };
-      setMessages(data.messages);
-      setActiveSessionId(sessionId);
+      if (await loadSessionMessages(sessionId)) {
+        restoredSessionIdRef.current = sessionId;
+        setActiveSessionId(sessionId);
+      }
     },
-    [setMessages],
+    [loadSessionMessages, setActiveSessionId],
   );
 
   const requestDeleteSession = useCallback((sessionId: string, e: React.MouseEvent) => {
@@ -237,6 +290,7 @@ export function ChatPanel() {
       fetchConversations,
       loadInitialConversations,
       setConversationItems,
+      setActiveSessionId,
       setMessages,
     ],
   );
@@ -252,11 +306,12 @@ export function ChatPanel() {
         {
           body: {
             conversationId: activeSessionId ? Number(activeSessionId) : undefined,
+            model: selectedModel,
           },
         },
       );
     },
-    [input, isLoading, activeSessionId, sendMessage],
+    [input, isLoading, activeSessionId, selectedModel, sendMessage],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -365,6 +420,10 @@ export function ChatPanel() {
                 onInputChange={(e) => setInput(e.target.value)}
                 onSubmit={handleSubmit}
                 onKeyDown={handleKeyDown}
+                modelOptions={modelSelection.models}
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
+                modelSelectionDisabled={isLoading}
               />
             </div>
           </>
@@ -387,6 +446,10 @@ export function ChatPanel() {
                 onInputChange={(e) => setInput(e.target.value)}
                 onSubmit={handleSubmit}
                 onKeyDown={handleKeyDown}
+                modelOptions={modelSelection.models}
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
+                modelSelectionDisabled={isLoading}
                 autoFocus
               />
 
@@ -395,6 +458,7 @@ export function ChatPanel() {
           </div>
         )}
       </main>
+      <ArticlePreviewPanel />
     </div>
   );
 }
@@ -548,12 +612,20 @@ function MessageInput({
   onInputChange,
   onSubmit,
   onKeyDown,
+  modelOptions,
+  selectedModel,
+  onModelChange,
+  modelSelectionDisabled,
   autoFocus,
 }: {
   input: string;
   onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: (e: React.FormEvent) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  modelOptions: string[];
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  modelSelectionDisabled: boolean;
   autoFocus?: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -580,7 +652,13 @@ function MessageInput({
           className="max-h-32 w-full resize-none border-0 bg-transparent px-2 pt-1.5 text-body-md text-ink outline-none placeholder:text-stone focus:outline-none focus-visible:outline-none"
         />
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <ModelSelect
+              models={modelOptions}
+              value={selectedModel}
+              onChange={onModelChange}
+              disabled={modelSelectionDisabled}
+            />
             <Button
               type="button"
               variant="ghost"
@@ -623,6 +701,44 @@ function MessageInput({
   );
 }
 
+function ModelSelect({
+  models,
+  value,
+  onChange,
+  disabled,
+}: {
+  models: string[];
+  value: string;
+  onChange: (model: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={(nextValue) => {
+        if (typeof nextValue === "string") onChange(nextValue);
+      }}
+      disabled={disabled}
+    >
+      <Select.Trigger
+        aria-label={`选择对话模型，当前：${value}`}
+        title={value}
+        className="h-8 min-w-0 max-w-[min(14rem,50vw)] gap-1.5 rounded-lg border-0 bg-surface px-2.5 py-1 text-caption text-charcoal shadow-none transition-colors hover:bg-background focus:shadow-none"
+      >
+        <Bot size={14} aria-hidden className="shrink-0 text-primary" />
+        <span className="min-w-0 flex-1 truncate text-left">{value}</span>
+      </Select.Trigger>
+      <Select.Content side="top" align="start" className="max-w-[min(24rem,calc(100vw-2rem))]">
+        {models.map((model) => (
+          <Select.Item key={model} value={model} title={model} className="gap-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-caption">{model}</span>
+          </Select.Item>
+        ))}
+      </Select.Content>
+    </Select>
+  );
+}
+
 function QuickActions({ onPick }: { onPick: (label: string) => void }) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
@@ -651,6 +767,70 @@ function messageText(message: ChatUIMessage): string {
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+function messageReasoning(message: ChatUIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "reasoning"; text: string } => p.type === "reasoning")
+    .map((p) => p.text)
+    .join("");
+}
+
+function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
+  const [open, setOpen] = useState(!isStreaming);
+
+  // 流式时自动展开，完成后保持当前状态
+  useEffect(() => {
+    if (!isStreaming) return;
+    const timer = window.setTimeout(() => setOpen(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [isStreaming]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-xl border border-hairline bg-surface-soft overflow-hidden"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface"
+      >
+        <Brain
+          size={13}
+          aria-hidden
+          className={cn("shrink-0 text-primary", isStreaming && "animate-pulse")}
+        />
+        <span className="flex-1 text-micro font-semibold uppercase tracking-wider text-steel">
+          {isStreaming ? "思考中…" : "思考过程"}
+        </span>
+        <ChevronDown
+          size={13}
+          aria-hidden
+          className={cn("shrink-0 text-stone transition-transform duration-200", open && "rotate-180")}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="thinking-content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="max-h-72 overflow-y-auto border-t border-hairline px-3 py-2.5">
+              <p className="whitespace-pre-wrap text-caption leading-relaxed text-steel">
+                {reasoning}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
 }
 
 function getErrorMessage(error: unknown) {
@@ -715,6 +895,12 @@ function MessageBubble({
   const text = messageText(message);
   const cited = message.metadata?.citedArticles;
   const error = message.metadata?.error;
+  const { setPreviewArticleId, setHighlightedCitationIdx } = useChatStore();
+
+  // 把 [N] 转成可拦截的 markdown 链接 [N](cite:N)
+  const processedText = cited?.length
+    ? text.replace(/\[(\d+)\]/g, (_, n) => `[${n}](cite:${n})`)
+    : text;
 
   if (message.role === "user") {
     return (
@@ -726,8 +912,15 @@ function MessageBubble({
     );
   }
 
+  const reasoning = messageReasoning(message);
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
+      {reasoning && (
+        <div className="max-w-[85%]">
+          <ThinkingBlock reasoning={reasoning} isStreaming={isStreaming && !text} />
+        </div>
+      )}
       <div className="flex justify-start">
         <div
           className={cn(
@@ -765,11 +958,35 @@ function MessageBubble({
                 pre: ({ children, ...props }) => (
                   <CodeBlockWithCopy {...props}>{children}</CodeBlockWithCopy>
                 ),
+                a: ({ href, children, ...props }) => {
+                  const match = href?.match(/^cite:(\d+)$/);
+                  if (match) {
+                    const idx = Number(match[1]) - 1;
+                    const article = cited?.[idx];
+                    if (article) {
+                      return (
+                        <sup>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewArticleId(article.id);
+                              setHighlightedCitationIdx(idx);
+                            }}
+                            className="mx-0.5 inline-flex size-4 items-center justify-center rounded bg-primary/10 text-[10px] font-semibold text-primary hover:bg-primary/20"
+                          >
+                            {idx + 1}
+                          </button>
+                        </sup>
+                      );
+                    }
+                  }
+                  return <a href={href} {...props}>{children}</a>;
+                },
               }}
               linkSafety={{ enabled: true }}
               className="prose prose-sm max-w-none break-words text-charcoal prose-headings:text-ink prose-strong:text-ink prose-a:text-primary prose-code:text-ink"
             >
-              {text}
+              {processedText}
             </Streamdown>
           )}
         </div>
@@ -789,37 +1006,58 @@ function toChatSession(summary: ConversationSummary): ChatSession {
 }
 
 function SourceCitations({ articles }: { articles: CitedArticle[] }) {
+  const { setPreviewArticleId, highlightedCitationIdx, setHighlightedCitationIdx } = useChatStore();
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? articles : articles.slice(0, 3);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-1.5"
     >
       <span className="text-micro font-semibold uppercase tracking-wider text-stone">
         来源引用
       </span>
-      <div className="grid gap-2">
-        {articles.map((article) => (
-          <a
-            key={article.id}
-            href={article.url ?? "#"}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-3 rounded-xl border border-hairline bg-surface-soft p-3 no-underline transition-all hover:border-primary/30 hover:bg-surface"
-          >
-            <FileText size={16} aria-hidden className="shrink-0 text-primary" />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate text-body-sm-medium text-ink">
+      <div className="flex flex-col gap-1">
+        {visible.map((article, i) => {
+          const isHighlighted = highlightedCitationIdx === i;
+          return (
+            <button
+              key={article.id}
+              type="button"
+              onClick={() => {
+                setPreviewArticleId(article.id);
+                setHighlightedCitationIdx(i);
+              }}
+              className={cn(
+                "flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-all",
+                isHighlighted
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-hairline bg-surface-soft hover:border-primary/30 hover:bg-surface",
+              )}
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-semibold text-primary">
+                {i + 1}
+              </span>
+              <FileText size={13} aria-hidden className="shrink-0 text-stone" />
+              <span className="truncate text-body-sm text-ink">
                 {article.title ?? "未知文章"}
               </span>
-              <span className="truncate text-caption text-steel">
-                {article.url ?? ""}
-              </span>
-            </span>
-          </a>
-        ))}
+            </button>
+          );
+        })}
       </div>
+      {articles.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="self-start text-caption text-primary hover:underline"
+        >
+          {expanded ? "收起" : `展开全部 ${articles.length} 条`}
+        </button>
+      )}
     </motion.div>
   );
 }

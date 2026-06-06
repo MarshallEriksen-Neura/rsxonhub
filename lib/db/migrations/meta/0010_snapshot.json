@@ -1,6 +1,6 @@
 {
-  "id": "1b07789c-4820-4926-a344-035543ff7f9c",
-  "prevId": "c07cc390-ce15-483b-b9e8-fc448ac28d95",
+  "id": "b7571e17-caa8-4d69-8544-3812d96cab73",
+  "prevId": "1b07789c-4820-4926-a344-035543ff7f9c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1133,6 +1133,26 @@
           "primaryKey": false,
           "notNull": false
         },
+        "total_article_count": {
+          "name": "total_article_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_processed_article_id": {
+          "name": "last_processed_article_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_processed_at": {
+          "name": "last_processed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "error": {
           "name": "error",
           "type": "text",
@@ -1365,6 +1385,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "error": {
           "name": "error",

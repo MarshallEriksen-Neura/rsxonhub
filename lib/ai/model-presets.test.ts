@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { inferModelCapabilities } from "@/lib/ai/model-presets";
+import {
+  buildChatModelSelectionSnapshot,
+  inferModelCapabilities,
+  resolveChatModelSelection,
+} from "@/lib/ai/model-presets";
 
 describe("AI model preset capability inference", () => {
   test("classifies embedding model names before chat-like provider families", () => {
@@ -50,5 +54,35 @@ describe("AI model preset capability inference", () => {
       supportsChat: false,
       supportsEmbedding: true,
     });
+  });
+
+  test("builds a deduplicated chat model selection with the default first", () => {
+    expect(
+      buildChatModelSelectionSnapshot("provider/default", [
+        { model: "provider/zeta", supportsChat: true, supportsEmbedding: false },
+        { model: "provider/default", supportsChat: true, supportsEmbedding: false },
+        { model: "provider/embed", supportsChat: false, supportsEmbedding: true },
+        { model: "provider/alpha", supportsChat: true, supportsEmbedding: false },
+        { model: "provider/alpha", supportsChat: true, supportsEmbedding: false },
+      ]),
+    ).toEqual({
+      defaultModel: "provider/default",
+      models: ["provider/default", "provider/alpha", "provider/zeta"],
+    });
+  });
+
+  test("resolves only models advertised by the current chat endpoint", () => {
+    const snapshot = {
+      defaultModel: "provider/default",
+      models: ["provider/default", "provider/alternate"],
+    };
+
+    expect(resolveChatModelSelection(undefined, snapshot)).toBe("provider/default");
+    expect(resolveChatModelSelection(" provider/alternate ", snapshot)).toBe(
+      "provider/alternate",
+    );
+    expect(() => resolveChatModelSelection("provider/unknown", snapshot)).toThrow(
+      "INVALID_CHAT_MODEL",
+    );
   });
 });

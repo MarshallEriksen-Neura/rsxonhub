@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Activity, Clock, Coins, DatabaseZap } from "lucide-react";
 import type { getSettingsObservabilitySnapshot } from "@/app/(app)/settings/actions";
+import { EmbeddingRebuildButton } from "./embedding-rebuild-button";
 import { SectionHeader } from "./section-header";
 
 type ObservabilitySnapshot = Awaited<ReturnType<typeof getSettingsObservabilitySnapshot>>;
@@ -39,7 +40,11 @@ export function ObservabilitySection({ snapshot }: { snapshot: ObservabilitySnap
           )}
         </Panel>
 
-        <Panel icon={DatabaseZap} title="向量重建">
+        <Panel
+          icon={DatabaseZap}
+          title="向量重建"
+          action={<EmbeddingRebuildButton className="gap-1.5" />}
+        >
           {snapshot.latestRebuild ? (
             <div className="flex flex-col gap-2 py-1">
               <div className="flex items-center justify-between gap-3">
@@ -93,17 +98,22 @@ export function ObservabilitySection({ snapshot }: { snapshot: ObservabilitySnap
 function Panel({
   icon: Icon,
   title,
+  action,
   children,
 }: {
   icon: typeof Activity;
   title: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="rounded-lg border border-hairline bg-background p-5">
-      <div className="mb-3 flex items-center gap-2 text-body-sm font-medium text-ink">
-        <Icon size={16} className="text-primary" aria-hidden />
-        {title}
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-body-sm font-medium text-ink">
+          <Icon size={16} className="text-primary" aria-hidden />
+          {title}
+        </div>
+        {action}
       </div>
       {children}
     </section>

@@ -32,6 +32,8 @@ import {
 import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
 import { ingestFeed, type IngestFeedResult } from "@/lib/rss/ingest";
 
+const EMBEDDING_REBUILD_EXPIRE_SECONDS = 60 * 60 * 2;
+
 export async function enqueueFeedFetch(feedId: number) {
   const boss = await startBoss();
   return boss.send(
@@ -65,12 +67,19 @@ export async function enqueueArticleEmbedding(input: ArticleEmbedJob) {
   const singletonKey = input.rebuildRunId
     ? `embedding.rebuild:${input.rebuildRunId}`
     : `article.embed:${input.articleId}`;
+  const rebuildOptions = input.rebuildRunId
+    ? {
+        expireInSeconds: EMBEDDING_REBUILD_EXPIRE_SECONDS,
+        retryDelayMax: 60 * 10,
+      }
+    : {};
 
   return boss.send(JOB_NAMES.articleEmbed, input, {
     retryLimit: 2,
     retryBackoff: true,
     singletonKey,
     singletonSeconds: 60 * 60,
+    ...rebuildOptions,
   });
 }
 

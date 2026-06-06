@@ -1,4 +1,4 @@
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   articleChunks,
@@ -46,6 +46,8 @@ export async function scoreCandidates(
   const perSourceLimit = options.perSourceLimit ?? 12;
   const terms = tokenizeInterest(profile.content);
   const since = new Date(Date.now() - recencyDays * 24 * 60 * 60 * 1000);
+  const sinceTimestamp = since.toISOString();
+  const articleTimestamp = sql`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`;
 
   const rows = await db
     .select({
@@ -62,12 +64,12 @@ export async function scoreCandidates(
     .from(articles)
     .innerJoin(feeds, eq(feeds.id, articles.feedId))
     .leftJoin(subscriptions, eq(subscriptions.feedId, feeds.id))
-    .where(gte(sql`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`, since))
-    .orderBy(desc(sql`coalesce(${articles.publishedAt}, ${articles.fetchedAt})`))
+    .where(sql`${articleTimestamp} >= ${sinceTimestamp}::timestamptz`)
+    .orderBy(desc(articleTimestamp))
     .limit(500);
 
   const embeddingScores = profile.embedding
-    ? await loadEmbeddingScores(profile.embedding, since)
+    ? await loadEmbeddingScores(profile.embedding, sinceTimestamp)
     : new Map<number, number>();
 
   return rankArticleCandidates({
@@ -145,7 +147,7 @@ async function persistDigestCandidates(digestDate: string, candidates: ArticleCa
   });
 }
 
-async function loadEmbeddingScores(embedding: number[], since: Date) {
+async function loadEmbeddingScores(embedding: number[], sinceTimestamp: string) {
   const vector = JSON.stringify(embedding);
   const rows = await db
     .select({
@@ -156,7 +158,7 @@ async function loadEmbeddingScores(embedding: number[], since: Date) {
     .innerJoin(articles, eq(articles.id, articleChunks.articleId))
     .where(
       sql`${articleChunks.embedding} is not null
-        and coalesce(${articles.publishedAt}, ${articles.fetchedAt}) >= ${since}`,
+        and coalesce(${articles.publishedAt}, ${articles.fetchedAt}) >= ${sinceTimestamp}::timestamptz`,
     )
     .groupBy(articleChunks.articleId)
     .orderBy(sql`min(${articleChunks.embedding} <=> ${vector}::vector)`)

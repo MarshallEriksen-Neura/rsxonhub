@@ -195,6 +195,24 @@ describe("feed job post-ingest embedding enqueue", () => {
     });
     expect(sendMock).not.toHaveBeenCalled();
   });
+
+  test("gives full rebuild embedding jobs a longer expiration budget", async () => {
+    const { JOB_NAMES } = await import("@/lib/jobs/names");
+    const { enqueueArticleEmbedding } = await import("@/lib/jobs/feed-jobs");
+
+    await enqueueArticleEmbedding({ rebuildRunId: 7 });
+
+    expect(sendMock).toHaveBeenCalledWith(
+      JOB_NAMES.articleEmbed,
+      { rebuildRunId: 7 },
+      expect.objectContaining({
+        expireInSeconds: 60 * 60 * 2,
+        retryBackoff: true,
+        retryDelayMax: 60 * 10,
+        singletonKey: "embedding.rebuild:7",
+      }),
+    );
+  });
 });
 
 describe("feed job candidate analysis closure", () => {

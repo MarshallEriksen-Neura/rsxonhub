@@ -5,6 +5,10 @@ import {
   withAIRequestRetry,
 } from "@/lib/ai";
 import { getEmbeddingConfig, type EmbeddingRuntimeConfig } from "@/lib/ai/config";
+import {
+  advanceEmbeddingRebuildProgress,
+  type EmbeddingRebuildProgress,
+} from "@/lib/ai/embedding-rebuild-progress";
 import { chunkArticleText, expectedEmbeddingDimension } from "@/lib/ai/embedding-text";
 import { db } from "@/lib/db";
 import {
@@ -16,6 +20,7 @@ import {
 } from "@/lib/db/schema";
 
 const EMBED_BATCH_SIZE = 16;
+const REBUILD_ARTICLE_PAGE_SIZE = 25;
 
 export type EmbeddingChangeCheck = {
   changed: boolean;
@@ -60,6 +65,7 @@ export async function getEmbeddingVectorDimension(
 
 export async function createEmbeddingRebuildRun() {
   const config = await getEmbeddingConfig();
+  const totalArticleCount = await countEmbeddingSourceArticles();
   const [run] = await db
     .insert(embeddingRebuildRuns)
     .values({
@@ -67,10 +73,29 @@ export async function createEmbeddingRebuildRun() {
       model: config.model,
       baseUrl: config.baseUrl,
       dimension: config.dimension,
+      totalArticleCount,
     })
     .returning();
 
   return run;
+}
+
+export async function attachEmbeddingRebuildRunJob(runId: number, jobId: string) {
+  await db
+    .update(embeddingRebuildRuns)
+    .set({ jobId })
+    .where(eq(embeddingRebuildRuns.id, runId));
+}
+
+export async function markEmbeddingRebuildRunFailed(runId: number, error: unknown) {
+  await db
+    .update(embeddingRebuildRuns)
+    .set({
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+      finishedAt: sql`now()`,
+    })
+    .where(eq(embeddingRebuildRuns.id, runId));
 }
 
 export async function prepareEmbeddingDimensionRebuild(dimension: number) {
@@ -105,31 +130,46 @@ export async function getLatestEmbeddingRebuildRun() {
 
 export async function rebuildArticleEmbeddings(rebuildRunId?: number) {
   const run = rebuildRunId ? await getRebuildRun(rebuildRunId) : null;
+  const totalArticleCount = run?.totalArticleCount || await countEmbeddingSourceArticles();
+  let progress: EmbeddingRebuildProgress = {
+    articleCount: run?.articleCount ?? 0,
+    chunkCount: run?.chunkCount ?? 0,
+    lastProcessedArticleId: run?.lastProcessedArticleId ?? 0,
+  };
+
   if (run) {
     await db
       .update(embeddingRebuildRuns)
-      .set({ status: "running", startedAt: sql`coalesce(${embeddingRebuildRuns.startedAt}, now())`, error: null })
+      .set({
+        status: "running",
+        startedAt: sql`coalesce(${embeddingRebuildRuns.startedAt}, now())`,
+        finishedAt: null,
+        error: null,
+        totalArticleCount,
+      })
       .where(eq(embeddingRebuildRuns.id, run.id));
   }
 
-  let articleCount = 0;
-  let chunkCount = 0;
-
   try {
-    const rows = await db
-      .select({
-        id: articles.id,
-        title: articles.title,
-        summaryRaw: articles.summaryRaw,
-        content: articles.content,
-      })
-      .from(articles)
-      .orderBy(articles.id);
+    while (true) {
+      const rows = await getNextRebuildArticles(progress.lastProcessedArticleId);
+      if (rows.length === 0) break;
 
-    for (const article of rows) {
-      const result = await embedArticle(article.id, buildArticleEmbeddingText(article), article.title ?? undefined);
-      articleCount += 1;
-      chunkCount += result.chunkCount;
+      for (const article of rows) {
+        const result = await embedArticle(
+          article.id,
+          buildArticleEmbeddingText(article),
+          article.title ?? undefined,
+        );
+        progress = advanceEmbeddingRebuildProgress(progress, {
+          articleId: article.id,
+          chunkCount: result.chunkCount,
+        });
+
+        if (run) {
+          await updateEmbeddingRebuildRunProgress(run.id, progress);
+        }
+      }
     }
 
     if (run) {
@@ -137,15 +177,19 @@ export async function rebuildArticleEmbeddings(rebuildRunId?: number) {
         .update(embeddingRebuildRuns)
         .set({
           status: "complete",
-          articleCount,
-          chunkCount,
+          articleCount: progress.articleCount,
+          chunkCount: progress.chunkCount,
+          lastProcessedArticleId: progress.lastProcessedArticleId,
           finishedAt: sql`now()`,
           error: null,
         })
         .where(eq(embeddingRebuildRuns.id, run.id));
     }
 
-    return { articleCount, chunkCount };
+    return {
+      articleCount: progress.articleCount,
+      chunkCount: progress.chunkCount,
+    };
   } catch (error) {
     if (run) {
       await db
@@ -267,6 +311,43 @@ async function getRebuildRun(id: number) {
     .limit(1);
   if (!run) throw new Error(`Embedding rebuild run not found: ${id}`);
   return run;
+}
+
+async function countEmbeddingSourceArticles() {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(articles);
+
+  return Number(count ?? 0);
+}
+
+function getNextRebuildArticles(lastProcessedArticleId: number) {
+  return db
+    .select({
+      id: articles.id,
+      title: articles.title,
+      summaryRaw: articles.summaryRaw,
+      content: articles.content,
+    })
+    .from(articles)
+    .where(gt(articles.id, lastProcessedArticleId))
+    .orderBy(articles.id)
+    .limit(REBUILD_ARTICLE_PAGE_SIZE);
+}
+
+async function updateEmbeddingRebuildRunProgress(
+  runId: number,
+  progress: EmbeddingRebuildProgress,
+) {
+  await db
+    .update(embeddingRebuildRuns)
+    .set({
+      articleCount: progress.articleCount,
+      chunkCount: progress.chunkCount,
+      lastProcessedArticleId: progress.lastProcessedArticleId,
+      lastProcessedAt: sql`now()`,
+    })
+    .where(eq(embeddingRebuildRuns.id, runId));
 }
 
 function buildArticleEmbeddingText(article: {

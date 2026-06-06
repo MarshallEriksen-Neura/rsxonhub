@@ -2,8 +2,10 @@ import { convertToModelMessages, streamText, stepCountIs, type UIMessage } from 
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { chatModel } from "@/lib/ai";
+import { getChatModelSelectionSnapshot } from "@/lib/ai/chat-model-directory";
 import { extractMessageText } from "@/lib/ai/chat-message";
-import { CHAT_AGENT_SYSTEM } from "@/lib/ai/prompts";
+import { resolveChatModelSelection } from "@/lib/ai/model-presets";
+import { buildChatAgentSystem } from "@/lib/ai/prompts";
 import type { CitedArticle } from "@/lib/ai/rag";
 import { createChatTools } from "@/lib/ai/tools";
 import {
@@ -18,6 +20,7 @@ import type { ChatMessageMetadata, ChatUIMessage } from "@/lib/chat/types";
 type ChatRequestBody = {
   messages?: UIMessage[];
   conversationId?: number | string | null;
+  model?: string | null;
 };
 
 type ToolEvent = {
@@ -48,6 +51,17 @@ export async function POST(req: Request) {
   const userText = extractMessageText(lastUserMessage);
   if (!userText) {
     return NextResponse.json({ error: "EMPTY_MESSAGE" }, { status: 400 });
+  }
+
+  const modelSelection = await getChatModelSelectionSnapshot();
+  let selectedModel: string;
+  try {
+    selectedModel = resolveChatModelSelection(body.model, modelSelection);
+  } catch {
+    return NextResponse.json(
+      { error: "INVALID_CHAT_MODEL", message: "所选模型不可用，请重新选择。" },
+      { status: 400 },
+    );
   }
 
   const requestedConversationId = parseConversationId(body.conversationId);
@@ -85,11 +99,11 @@ export async function POST(req: Request) {
 
   try {
     const contextWindow = await buildChatContextWindow(historyMessages);
-    const model = await chatModel();
+    const model = await chatModel(selectedModel);
     const modelMessages = await convertToModelMessages(contextWindow.messages);
     const result = streamText({
       model,
-      system: CHAT_AGENT_SYSTEM,
+      system: buildChatAgentSystem(),
       messages: modelMessages,
       allowSystemInMessages: true,
       tools,

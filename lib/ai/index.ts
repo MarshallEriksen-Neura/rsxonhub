@@ -26,7 +26,7 @@ export class AIConfigurationError extends Error {
 
 export const EMBEDDING_DIM = DEFAULT_EMBEDDING_DIM;
 
-export async function chatModel() {
+export async function chatModel(modelOverride?: string) {
   const config = await getChatConfig();
   assertConfiguredApiKey("对话模型", config.apiKey);
 
@@ -42,8 +42,8 @@ export async function chatModel() {
   });
 
   return config.chatApiMode === "responses"
-    ? provider.responses(config.model)
-    : provider.chat(config.model);
+    ? provider.responses(modelOverride ?? config.model)
+    : provider.chat(modelOverride ?? config.model);
 }
 
 export async function embeddingModel(inputType: "passage" | "query" = "query") {

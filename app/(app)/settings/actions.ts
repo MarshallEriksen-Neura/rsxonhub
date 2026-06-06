@@ -23,9 +23,11 @@ import {
   embeddingConfigPlanChanged,
 } from "@/lib/ai/config-plan";
 import {
+  attachEmbeddingRebuildRunJob,
   createEmbeddingRebuildRun,
   getEmbeddingVectorDimension,
   getLatestEmbeddingRebuildRun,
+  markEmbeddingRebuildRunFailed,
   prepareEmbeddingDimensionRebuild,
   probeEmbeddingDimension,
 } from "@/lib/ai/embedding-rebuild";
@@ -118,9 +120,7 @@ export async function saveAISettings(
     const config = await upsertAIConfigs(chat, embeddingToSave);
 
     if (embeddingChanged) {
-      const run = await createEmbeddingRebuildRun();
-      rebuildRunId = run.id;
-      await enqueueArticleEmbedding({ rebuildRunId });
+      rebuildRunId = await createAndEnqueueEmbeddingRebuildRun();
     }
 
     revalidatePath("/settings");
@@ -525,20 +525,35 @@ export async function rebuildEmbeddingIndexForCurrentModel(): Promise<RebuildEmb
       getEmbeddingConfig(),
     ]);
     await upsertAIConfigs(chatConfig, { ...embeddingConfig, dimension: probedDimension });
-    const run = await createEmbeddingRebuildRun();
-    await enqueueArticleEmbedding({ rebuildRunId: run.id });
+    const rebuildRunId = await createAndEnqueueEmbeddingRebuildRun();
     revalidatePath("/settings");
 
     return {
       ok: true,
-      rebuildRunId: run.id,
-      message: `向量索引已切换为 ${probedDimension} 维,重建任务 #${run.id} 已入队。`,
+      rebuildRunId,
+      message: `向量索引已切换为 ${probedDimension} 维,重建任务 #${rebuildRunId} 已入队。`,
     };
   } catch (error) {
     return {
       ok: false,
       message: error instanceof Error ? error.message : "重建向量索引失败。",
     };
+  }
+}
+
+async function createAndEnqueueEmbeddingRebuildRun() {
+  const run = await createEmbeddingRebuildRun();
+
+  try {
+    const jobId = await enqueueArticleEmbedding({ rebuildRunId: run.id });
+    if (!jobId) {
+      throw new Error("向量重建任务没有返回 jobId,可能被 pg-boss singleton 规则跳过。");
+    }
+    await attachEmbeddingRebuildRunJob(run.id, jobId);
+    return run.id;
+  } catch (error) {
+    await markEmbeddingRebuildRunFailed(run.id, error);
+    throw error;
   }
 }
 
@@ -585,6 +600,10 @@ export async function getSettingsObservabilitySnapshot() {
           dimension: latestRebuild.dimension,
           articleCount: latestRebuild.articleCount,
           chunkCount: latestRebuild.chunkCount,
+          jobId: latestRebuild.jobId,
+          totalArticleCount: latestRebuild.totalArticleCount,
+          lastProcessedArticleId: latestRebuild.lastProcessedArticleId,
+          lastProcessedAt: latestRebuild.lastProcessedAt?.toISOString() ?? null,
           error: latestRebuild.error,
           startedAt: latestRebuild.startedAt?.toISOString() ?? null,
           finishedAt: latestRebuild.finishedAt?.toISOString() ?? null,

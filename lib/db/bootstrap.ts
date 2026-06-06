@@ -88,7 +88,7 @@ async function initAIConfigs() {
     return;
   }
 
-  // 检查迁移历史是否存在，如果表存在但没有迁移记录，自动插入
+  // 只报告迁移历史异常,不要伪造 Drizzle 记录;否则后续迁移会被错误跳过。
   try {
     const [migrationResult] = await db.execute<{ count: number }>(
       sql`SELECT COUNT(*) as "count" FROM drizzle.__drizzle_migrations`,
@@ -96,28 +96,11 @@ async function initAIConfigs() {
     const migrationCount = Number(migrationResult?.count ?? 0);
 
     if (migrationCount === 0) {
-      console.log("⚠️  Business tables exist but no migration history found. Inserting migration records...");
-      
-      // 插入迁移记录（标记所有迁移为已完成）
-      const migrations = [
-        { hash: "0000_mighty_black_panther", createdAt: 1780561893632 },
-        { hash: "0001_youthful_pyro", createdAt: 1780566917684 },
-        { hash: "0002_lying_naoko", createdAt: 1780571426691 },
-        { hash: "0003_repair_feed_fetch_runs", createdAt: 1780576504234 },
-        { hash: "0004_careful_swarm", createdAt: 1780581923526 },
-      ];
-
-      for (const migration of migrations) {
-        await db.execute(
-          sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
-              VALUES (${migration.hash}, ${migration.createdAt})
-              ON CONFLICT DO NOTHING`,
-        );
-      }
-      
-      console.log("✅ Migration records inserted successfully.");
+      console.warn(
+        "Business tables exist but Drizzle migration history is empty. Run `bun run db:migrate` or reconcile the schema manually before relying on new tables.",
+      );
     }
-  } catch (error) {
+  } catch {
     // 如果 __drizzle_migrations 表不存在，忽略错误
     console.log("Migration table does not exist yet. Will be created by drizzle-kit migrate.");
   }

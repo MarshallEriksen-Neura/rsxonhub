@@ -31,6 +31,7 @@ import type {
   AIModelPresetSnapshot,
 } from "@/lib/ai/model-presets";
 import { cn } from "@/lib/utils";
+import { EmbeddingRebuildButton } from "./embedding-rebuild-button";
 import { SectionHeader } from "./section-header";
 
 type AISectionProps = {
@@ -44,6 +45,10 @@ type AISectionProps = {
     dimension: number;
     articleCount: number;
     chunkCount: number;
+    jobId: string | null;
+    totalArticleCount: number;
+    lastProcessedArticleId: number;
+    lastProcessedAt: string | null;
     error: string | null;
     startedAt: string | null;
     finishedAt: string | null;
@@ -399,10 +404,45 @@ export function AISection({
 
       {latestRebuild ? (
         <div className="mb-5 rounded-md border border-hairline bg-surface px-4 py-3 text-body-sm text-charcoal">
-          <div className="font-medium text-ink">最近向量重建 #{latestRebuild.id}</div>
-          <div className="mt-1 text-micro text-steel">
-            {latestRebuild.status} · {latestRebuild.model} · {latestRebuild.articleCount} 篇文章 · {latestRebuild.chunkCount} chunks
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium text-ink">最近向量重建 #{latestRebuild.id}</div>
+            <div className="flex items-center gap-2">
+              <EmbeddingRebuildButton
+                disabled={isPending}
+                className="gap-1.5"
+                onResult={(result) =>
+                  setStatusMessage({
+                    tone: result.ok ? "success" : "error",
+                    message: result.message,
+                  })
+                }
+              />
+              <span
+                className={cn(
+                  "rounded-md px-2 py-1 text-micro font-medium",
+                  latestRebuild.status === "failed"
+                    ? "bg-destructive/10 text-destructive"
+                    : latestRebuild.status === "complete"
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-steel",
+                )}
+              >
+                {latestRebuild.status}
+              </span>
+            </div>
           </div>
+          <div className="mt-2 text-micro text-steel">
+            {latestRebuild.model} · {formatRebuildArticleProgress(latestRebuild)} · {latestRebuild.chunkCount} chunks
+          </div>
+          {latestRebuild.status === "pending" || latestRebuild.status === "running" ? (
+            <div className="mt-2 rounded-md border border-hairline bg-canvas px-3 py-2 text-micro text-steel">
+              {latestRebuild.status === "running"
+                ? `checkpoint article #${latestRebuild.lastProcessedArticleId}${latestRebuild.lastProcessedAt ? ` · ${new Date(latestRebuild.lastProcessedAt).toLocaleString("zh-CN")}` : ""}`
+                : latestRebuild.jobId
+                ? `job ${latestRebuild.jobId} 已写入队列,等待后台 worker 接手。`
+                : "这条记录还没有绑定 jobId,属于旧记录或入队未完成状态。"}
+            </div>
+          ) : null}
           {latestRebuild.error ? (
             <div className="mt-1 text-micro text-destructive">{latestRebuild.error}</div>
           ) : null}
@@ -575,6 +615,12 @@ export function AISection({
       </div>
     </section>
   );
+}
+
+function formatRebuildArticleProgress(rebuild: NonNullable<AISectionProps["latestRebuild"]>) {
+  return rebuild.totalArticleCount > 0
+    ? `${rebuild.articleCount}/${rebuild.totalArticleCount} 篇文章`
+    : `${rebuild.articleCount} 篇文章`;
 }
 
 function RuntimePanel({
