@@ -7,6 +7,7 @@ const workMock = mock(async () => undefined);
 const dbSelectMock = mock();
 const embedSingleArticleMock = mock(async () => undefined);
 const rebuildArticleEmbeddingsMock = mock(async () => undefined);
+const analyzeArticleMock = mock(async () => undefined);
 const selectDigestCandidatesMock = mock(async () => []);
 const getActiveInterestProfileMock = mock(async () => ({
   content: "agent retrieval",
@@ -54,7 +55,7 @@ mock.module("@/lib/db/schema", () => ({
 }));
 
 mock.module("@/lib/ai/article-analysis", () => ({
-  analyzeArticle: mock(),
+  analyzeArticle: analyzeArticleMock,
 }));
 
 mock.module("@/lib/ai/config", () => ({
@@ -220,6 +221,8 @@ describe("feed job candidate analysis closure", () => {
     sendMock.mockReset();
     sendMock.mockImplementation(async () => "job-id");
     dbSelectMock.mockReset();
+    analyzeArticleMock.mockReset();
+    analyzeArticleMock.mockImplementation(async () => undefined);
     selectDigestCandidatesMock.mockReset();
     selectDigestCandidatesMock.mockImplementation(async () => []);
     getActiveInterestProfileMock.mockReset();
@@ -237,31 +240,18 @@ describe("feed job candidate analysis closure", () => {
     attachDigestRunJobMock.mockImplementation(async () => undefined);
   });
 
-  test("enqueues analysis only for retrieved candidate articles that are not pending", async () => {
-    const { JOB_NAMES } = await import("@/lib/jobs/names");
-    const { enqueueAnalysisForCurrentCandidates } = await import("@/lib/jobs/feed-jobs");
+  test("runs analysis immediately for retrieved candidate articles", async () => {
+    const { analyzeCurrentCandidates } = await import("@/lib/jobs/feed-jobs");
 
-    dbSelectMock.mockReturnValue({
-      from: () => ({
-        where: async () => [{ articleId: 12 }],
-      }),
-    });
-
-    const enqueued = await enqueueAnalysisForCurrentCandidates([
+    const analyzed = await analyzeCurrentCandidates([
       { articleId: 11 },
       { articleId: 12 },
       { articleId: 13 },
     ] as Awaited<ReturnType<typeof selectDigestCandidatesMock>>);
 
-    expect(enqueued).toBe(2);
-    expect(sendMock.mock.calls.map((call) => call[0])).toEqual([
-      JOB_NAMES.articleAnalyze,
-      JOB_NAMES.articleAnalyze,
-    ]);
-    expect(sendMock.mock.calls.map((call) => call[1])).toEqual([
-      { articleId: 11 },
-      { articleId: 13 },
-    ]);
+    expect(analyzed).toBe(3);
+    expect(analyzeArticleMock.mock.calls.map((call) => call[0])).toEqual([11, 12, 13]);
+    expect(sendMock).not.toHaveBeenCalled();
     expect(selectDigestCandidatesMock).not.toHaveBeenCalled();
   });
 });

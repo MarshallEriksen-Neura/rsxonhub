@@ -123,6 +123,8 @@ export function AISection({
     probedDimension: number;
     expectedDimension: number;
   } | null>(null);
+  const [liveRebuild, setLiveRebuild] = useState<typeof latestRebuild>(null);
+  const visibleRebuild = liveRebuild ?? latestRebuild;
 
   const modelItems = useMemo<ModelItem[]>(() => {
     return mergeModelCapabilities([
@@ -402,10 +404,10 @@ export function AISection({
         </div>
       ) : null}
 
-      {latestRebuild ? (
+      {visibleRebuild ? (
         <div className="mb-5 rounded-md border border-hairline bg-surface px-4 py-3 text-body-sm text-charcoal">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-medium text-ink">最近向量重建 #{latestRebuild.id}</div>
+            <div className="font-medium text-ink">最近向量重建 #{visibleRebuild.id}</div>
             <div className="flex items-center gap-2">
               <EmbeddingRebuildButton
                 disabled={isPending}
@@ -416,35 +418,36 @@ export function AISection({
                     message: result.message,
                   })
                 }
+                onProgress={setLiveRebuild}
               />
               <span
                 className={cn(
                   "rounded-md px-2 py-1 text-micro font-medium",
-                  latestRebuild.status === "failed"
+                  visibleRebuild.status === "failed"
                     ? "bg-destructive/10 text-destructive"
-                    : latestRebuild.status === "complete"
+                    : visibleRebuild.status === "complete"
                       ? "bg-primary/10 text-primary"
                       : "bg-muted text-steel",
                 )}
               >
-                {latestRebuild.status}
+                {visibleRebuild.status}
               </span>
             </div>
           </div>
           <div className="mt-2 text-micro text-steel">
-            {latestRebuild.model} · {formatRebuildArticleProgress(latestRebuild)} · {latestRebuild.chunkCount} chunks
+            {visibleRebuild.model} · {formatRebuildArticleProgress(visibleRebuild)} · {visibleRebuild.chunkCount} chunks
           </div>
-          {latestRebuild.status === "pending" || latestRebuild.status === "running" ? (
+          {visibleRebuild.status === "pending" || visibleRebuild.status === "running" ? (
             <div className="mt-2 rounded-md border border-hairline bg-canvas px-3 py-2 text-micro text-steel">
-              {latestRebuild.status === "running"
-                ? `checkpoint article #${latestRebuild.lastProcessedArticleId}${latestRebuild.lastProcessedAt ? ` · ${new Date(latestRebuild.lastProcessedAt).toLocaleString("zh-CN")}` : ""}`
-                : latestRebuild.jobId
-                ? `job ${latestRebuild.jobId} 已写入队列,等待后台 worker 接手。`
+              {visibleRebuild.status === "running"
+                ? `checkpoint article #${visibleRebuild.lastProcessedArticleId}${visibleRebuild.lastProcessedAt ? ` · ${new Date(visibleRebuild.lastProcessedAt).toLocaleString("zh-CN")}` : ""}`
+                : visibleRebuild.jobId
+                ? `job ${visibleRebuild.jobId} 已写入队列,等待后台 worker 接手。`
                 : "这条记录还没有绑定 jobId,属于旧记录或入队未完成状态。"}
             </div>
           ) : null}
-          {latestRebuild.error ? (
-            <div className="mt-1 text-micro text-destructive">{latestRebuild.error}</div>
+          {visibleRebuild.error ? (
+            <div className="mt-1 text-micro text-destructive">{visibleRebuild.error}</div>
           ) : null}
         </div>
       ) : null}

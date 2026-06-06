@@ -170,7 +170,7 @@ export function FeedsSection() {
       <AddFeedDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        onCreated={() => void refreshFeeds()}
+        onCreated={refreshFeeds}
       />
     </section>
   );

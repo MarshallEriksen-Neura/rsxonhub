@@ -2,6 +2,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { AlertTriangle, Clock, Database, Rss } from "lucide-react";
 import { Badge } from "@/components/retroui/Badge";
 import { Empty } from "@/components/retroui/Empty";
+import { Table } from "@/components/retroui/Table";
 import { db } from "@/lib/db";
 import { appErrorLogs, digestItems, digestRuns, digests, feeds } from "@/lib/db/schema";
 import { getScheduleLocalDate } from "@/lib/datetime";
@@ -115,18 +116,20 @@ export default async function LogsPage() {
               </div>
             </Empty>
           ) : (
-            <div className="overflow-hidden border border-hairline bg-card">
-              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)_7rem] border-b border-hairline bg-surface-soft px-4 py-2 text-micro font-semibold uppercase tracking-wider text-steel max-md:hidden">
-                <span>时间</span>
-                <span>错误</span>
-                <span className="text-right">来源</span>
-              </div>
-              <ul className="divide-y divide-hairline-soft">
+            <Table className="border-hairline bg-card shadow-none">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head className="w-32">时间</Table.Head>
+                  <Table.Head>错误</Table.Head>
+                  <Table.Head className="w-28 text-right">来源</Table.Head>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
                 {logs.map((log) => (
                   <ErrorLogItem key={log.id} log={log} />
                 ))}
-              </ul>
-            </div>
+              </Table.Body>
+            </Table>
           )}
         </section>
       </div>
@@ -210,14 +213,17 @@ function ErrorLogItem({ log }: { log: ErrorLogRow }) {
   const details = JSON.stringify(log.details ?? {}, null, 2);
 
   return (
-    <li className="grid gap-3 px-4 py-3 md:grid-cols-[7.5rem_minmax(0,1fr)_7rem]">
+    <Table.Row>
+      <Table.Cell className="w-32 align-top">
       <time
         dateTime={log.createdAt.toISOString()}
         className="text-micro text-steel"
       >
         {formatDate(log.createdAt)}
       </time>
+      </Table.Cell>
 
+      <Table.Cell className="min-w-[32rem] align-top">
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Badge
@@ -262,13 +268,16 @@ function ErrorLogItem({ log }: { log: ErrorLogRow }) {
           </details>
         ) : null}
       </div>
+      </Table.Cell>
 
-      <div className="flex justify-start md:justify-end">
+      <Table.Cell className="w-28 align-top">
+      <div className="flex justify-end">
         <Badge variant="outline" size="sm" className="h-fit">
           {log.source}
         </Badge>
       </div>
-    </li>
+      </Table.Cell>
+    </Table.Row>
   );
 }
 

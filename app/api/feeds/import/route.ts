@@ -2,13 +2,22 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAppError, publicFeedErrorResponse } from "@/lib/errors/app-error-log";
 import { enqueueChangedArticleEmbeddings } from "@/lib/jobs/feed-jobs";
+import { fetchFoloListSubscriptions, FoloListError } from "@/lib/rss/folo-list";
 import { ingestFeed, subscribeFeed } from "@/lib/rss/ingest";
 import { parseOpmlSubscriptions } from "@/lib/rss/opml";
 
-const importFeedsSchema = z.object({
-  opml: z.string().trim().min(1).max(1_000_000),
-  folder: z.string().trim().min(1).optional(),
-});
+const MAX_IMPORT_SUBSCRIPTIONS = 100;
+
+const importFeedsSchema = z
+  .object({
+    opml: z.string().trim().min(1).max(1_000_000).optional(),
+    foloListUrl: z.string().trim().min(1).optional(),
+    folder: z.string().trim().min(1).optional(),
+  })
+  .refine((value) => Boolean(value.opml) !== Boolean(value.foloListUrl), {
+    message: "请提供 OPML 内容或 Folo 分享列表链接。",
+    path: ["opml"],
+  });
 
 export async function POST(request: Request) {
   const parsed = importFeedsSchema.safeParse(await request.json().catch(() => ({})));
@@ -19,16 +28,33 @@ export async function POST(request: Request) {
     );
   }
 
-  const subscriptions = parseOpmlSubscriptions(parsed.data.opml, parsed.data.folder);
+  let subscriptions;
+  try {
+    subscriptions = parsed.data.foloListUrl
+      ? await fetchFoloListSubscriptions(parsed.data.foloListUrl, {
+          fallbackFolder: parsed.data.folder,
+          limit: MAX_IMPORT_SUBSCRIPTIONS,
+        })
+      : parseOpmlSubscriptions(parsed.data.opml ?? "", parsed.data.folder);
+  } catch (error) {
+    if (error instanceof FoloListError) {
+      return NextResponse.json(
+        { error: "INVALID_FOLO_LIST", message: error.message },
+        { status: 400 },
+      );
+    }
+    throw error;
+  }
+
   if (subscriptions.length === 0) {
     return NextResponse.json(
-      { error: "EMPTY_OPML", message: "没有在 OPML 中找到可导入的订阅源。" },
+      { error: "EMPTY_IMPORT", message: "没有找到可导入的订阅源。" },
       { status: 400 },
     );
   }
 
   const results = [];
-  for (const subscription of subscriptions.slice(0, 100)) {
+  for (const subscription of subscriptions.slice(0, MAX_IMPORT_SUBSCRIPTIONS)) {
     try {
       const feed = await subscribeFeed({
         sourceUri: subscription.sourceUri,

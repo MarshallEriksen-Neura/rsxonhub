@@ -1,4 +1,4 @@
-import { streamObject } from "ai";
+import { generateObject } from "ai";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { chatModel, withAIRequestRetry } from "@/lib/ai";
@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/schema";
 
 export const ARTICLE_SUMMARY_PROMPT_VERSION = "article-summary-v1";
+const DEFAULT_ARTICLE_ANALYSIS_TIMEOUT_MS = 75_000;
 
 const articleAnalysisSchema = z.object({
   summary: z.string().min(1).max(800),
@@ -81,19 +82,22 @@ export async function analyzeArticle(articleId: number) {
 
   try {
     const model = await chatModel();
-    const result = await withAIRequestRetry(async () =>
-      streamObject({
-        model,
-        schema: articleAnalysisSchema,
-        temperature: 0.7,
-        topP: 1,
-        system:
-          "你是单用户 RSS 阅读器的文章分析器。只基于给定文章证据输出摘要、要点、标签和重要度；不要引入外部事实。",
-        prompt: buildPrompt(article),
-      }),
+    const result = await withArticleAnalysisTimeout(
+      withAIRequestRetry(() =>
+        generateObject({
+          model,
+          schema: articleAnalysisSchema,
+          temperature: 0.7,
+          topP: 1,
+          system:
+            "你是单用户 RSS 阅读器的文章分析器。只基于给定文章证据输出摘要、要点、标签和重要度；不要引入外部事实。",
+          prompt: buildPrompt(article),
+        }),
+      ),
     );
 
-    const [analysis, usage] = await Promise.all([result.object, result.usage]);
+    const analysis = result.object;
+    const usage = result.usage;
     const tokenCost = usage
       ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
       : null;
@@ -178,4 +182,30 @@ function buildPrompt(article: {
 
 function compactText(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, 8_000);
+}
+
+function withArticleAnalysisTimeout<T>(promise: Promise<T>) {
+  const timeoutMs = articleAnalysisTimeoutMs();
+  let timeout: ReturnType<typeof setTimeout>;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new Error(
+          `Article summary generation timed out after ${timeoutMs}ms.`,
+        ),
+      );
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
+}
+
+function articleAnalysisTimeoutMs() {
+  const raw = Number(process.env.ARTICLE_ANALYSIS_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_ARTICLE_ANALYSIS_TIMEOUT_MS;
 }

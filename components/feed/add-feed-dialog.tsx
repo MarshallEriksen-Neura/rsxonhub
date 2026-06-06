@@ -25,7 +25,7 @@ export function AddFeedDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated?: () => void;
+  onCreated?: () => void | Promise<void>;
 }) {
   const feeds = useFeedStore((s) => s.feeds);
   const addFeed = useFeedStore((s) => s.addFeed);
@@ -50,9 +50,14 @@ export function AddFeedDialog({
   const [importing, setImporting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<FeedPreview | null>(null);
+  const [opmlImportStatus, setOpmlImportStatus] = useState<OpmlImportStatus>({
+    state: "idle",
+    message: "选择文件或粘贴 OPML 内容后可以开始导入。",
+  });
 
   const resolvedFolder = creatingFolder ? newFolder.trim() : folder;
   const urlValid = isSupportedSourceUri(url);
+  const foloList = isFoloShareListUrl(url);
   const urlError = touched && !urlValid;
   const folderError = touched && resolvedFolder.length === 0;
   const opmlValid = opmlText.trim().length > 0 && opmlFolder.trim().length > 0;
@@ -61,6 +66,7 @@ export function AddFeedDialog({
   const canSubmit = mode === "single"
     ? urlValid && resolvedFolder.length > 0
     : opmlValid;
+  const opmlSettled = opmlImportStatus.state === "success";
 
   function reset() {
     setUrl("");
@@ -76,6 +82,10 @@ export function AddFeedDialog({
     setImporting(false);
     setPreviewing(false);
     setPreview(null);
+    setOpmlImportStatus({
+      state: "idle",
+      message: "选择文件或粘贴 OPML 内容后可以开始导入。",
+    });
   }
 
   function handleOpenChange(next: boolean) {
@@ -122,6 +132,30 @@ export function AddFeedDialog({
     setSubmitting(true);
 
     try {
+      if (foloList) {
+        const response = await fetch("/api/feeds/import", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            foloListUrl: url.trim(),
+            folder: resolvedFolder,
+          }),
+        });
+        const payload = (await response.json()) as OpmlImportResult;
+
+        if (!response.ok) {
+          throw new Error(payload.message ?? "导入 Folo 分享列表失败");
+        }
+
+        const suffix = payload.failedCount > 0 ? `,${payload.failedCount} 个失败` : "";
+        await onCreated?.();
+        toast.success(`已导入 ${payload.importedCount} 个订阅源${suffix}`);
+        handleOpenChange(false);
+        return;
+      }
+
       const response = await fetch("/api/feeds", {
         method: "POST",
         headers: {
@@ -146,7 +180,7 @@ export function AddFeedDialog({
         folder: payload.feed.folder,
       });
       selectFeed(feed.id);
-      onCreated?.();
+      await onCreated?.();
       toast.success("订阅源已添加");
       handleOpenChange(false);
     } catch (error) {
@@ -158,6 +192,10 @@ export function AddFeedDialog({
 
   async function handleImportOpml() {
     setImporting(true);
+    setOpmlImportStatus({
+      state: "importing",
+      message: "已提交 OPML,正在解析并导入订阅源。",
+    });
 
     try {
       const response = await fetch("/api/feeds/import", {
@@ -176,12 +214,25 @@ export function AddFeedDialog({
         throw new Error(payload.message ?? "导入 OPML 失败");
       }
 
-      onCreated?.();
       const suffix = payload.failedCount > 0 ? `,${payload.failedCount} 个失败` : "";
+      setOpmlImportStatus({
+        state: "refreshing",
+        message: `服务器已处理完成:成功 ${payload.importedCount} 个${suffix},正在刷新订阅列表。`,
+      });
+      await onCreated?.();
+      setOpmlImportStatus({
+        state: "success",
+        message: `导入完成:成功 ${payload.importedCount} 个${suffix}。`,
+      });
       toast.success(`已导入 ${payload.importedCount} 个订阅源${suffix}`);
-      handleOpenChange(false);
+      window.setTimeout(() => handleOpenChange(false), 900);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "导入 OPML 失败");
+      const message = error instanceof Error ? error.message : "导入 OPML 失败";
+      setOpmlImportStatus({
+        state: "error",
+        message,
+      });
+      toast.error(message);
     } finally {
       setImporting(false);
     }
@@ -189,8 +240,16 @@ export function AddFeedDialog({
 
   async function handleOpmlFile(file: File | null) {
     if (!file) return;
+    setOpmlImportStatus({
+      state: "reading",
+      message: `正在读取 ${file.name}。`,
+    });
     const text = await file.text();
     setOpmlText(text);
+    setOpmlImportStatus({
+      state: "ready",
+      message: `已读取 ${file.name},共 ${text.length.toLocaleString("zh-CN")} 个字符。`,
+    });
   }
 
   return (
@@ -218,7 +277,15 @@ export function AddFeedDialog({
               active={mode === "opml"}
               icon={<FileText size={14} aria-hidden />}
               label="OPML 导入"
-              onClick={() => setMode("opml")}
+              onClick={() => {
+                setMode("opml");
+                setOpmlImportStatus({
+                  state: opmlText.trim() ? "ready" : "idle",
+                  message: opmlText.trim()
+                    ? "OPML 内容已就绪,可以开始导入。"
+                    : "选择文件或粘贴 OPML 内容后可以开始导入。",
+                });
+              }}
             />
           </div>
 
@@ -226,14 +293,14 @@ export function AddFeedDialog({
             <>
               {/* RSS 链接 */}
               <Field
-                label="RSS 链接"
+                label="订阅链接"
                 required
-                error={urlError ? "请输入有效的 http(s) 或 rsshub:// 链接" : undefined}
+                error={urlError ? "请输入有效的 http(s)、rsshub:// 或 Folo 分享列表链接" : undefined}
               >
                 <Input
                   type="text"
                   autoFocus
-                  placeholder="rsshub://anthropic/research"
+                  placeholder="rsshub://anthropic/research 或 https://app.folo.is/share/lists/..."
                   value={url}
                   onChange={(e) => {
                     setUrl(e.target.value);
@@ -249,12 +316,17 @@ export function AddFeedDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => void handlePreview()}
-                  disabled={!urlValid || previewing || submitting}
+                  disabled={!urlValid || foloList || previewing || submitting}
                   className="gap-1.5"
                 >
                   {previewing ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Search size={14} aria-hidden />}
                   预览
                 </Button>
+                {foloList ? (
+                  <span className="truncate text-micro text-steel">
+                    Folo 分享列表会按当前分类批量导入
+                  </span>
+                ) : null}
                 {preview ? (
                   <span className="truncate text-micro text-steel">
                     {preview.feed.title ?? preview.source.canonicalUri} · {preview.feed.itemCount} 条
@@ -318,6 +390,7 @@ export function AddFeedDialog({
                   accept=".opml,.xml,text/xml,application/xml"
                   onChange={(e) => void handleOpmlFile(e.target.files?.[0] ?? null)}
                   aria-invalid={opmlError || undefined}
+                  disabled={importing}
                 />
               </Field>
 
@@ -325,7 +398,16 @@ export function AddFeedDialog({
                 <Textarea
                   placeholder="<opml>...</opml>"
                   value={opmlText}
-                  onChange={(e) => setOpmlText(e.target.value)}
+                  onChange={(e) => {
+                    setOpmlText(e.target.value);
+                    setOpmlImportStatus({
+                      state: e.target.value.trim() ? "ready" : "idle",
+                      message: e.target.value.trim()
+                        ? "OPML 内容已就绪,可以开始导入。"
+                        : "选择文件或粘贴 OPML 内容后可以开始导入。",
+                    });
+                  }}
+                  disabled={importing}
                   className={cn("min-h-36 font-mono text-micro", opmlError && "border-destructive")}
                 />
               </Field>
@@ -341,19 +423,27 @@ export function AddFeedDialog({
                   value={opmlFolder}
                   onChange={(e) => setOpmlFolder(e.target.value)}
                   aria-invalid={opmlFolderError || undefined}
+                  disabled={importing}
                 />
               </Field>
+
+              <OpmlImportFeedback status={opmlImportStatus} />
             </>
           )}
         </form>
 
         <Dialog.Footer>
-          <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)}>
+          <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)} disabled={importing}>
             取消
           </Button>
-          <Button size="sm" disabled={!canSubmit || submitting || importing} onClick={handleSubmit} className="gap-1.5">
+          <Button
+            size="sm"
+            disabled={!canSubmit || submitting || importing || opmlSettled}
+            onClick={handleSubmit}
+            className="gap-1.5"
+          >
             {mode === "opml" && importing ? <Loader2 size={14} className="animate-spin" aria-hidden /> : null}
-            {mode === "opml" ? (importing ? "导入中" : "导入") : submitting ? "添加中" : "添加"}
+            {mode === "opml" ? (importing ? "导入中" : "导入") : submitting ? "处理中" : foloList ? "导入" : "添加"}
           </Button>
         </Dialog.Footer>
       </Dialog.Content>
@@ -455,6 +545,36 @@ function FolderPicker({
   );
 }
 
+function OpmlImportFeedback({ status }: { status: OpmlImportStatus }) {
+  const busy = status.state === "reading" || status.state === "importing" || status.state === "refreshing";
+  const success = status.state === "success";
+  const error = status.state === "error";
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "flex items-start gap-2 border px-3 py-2 text-body-sm",
+        error
+          ? "border-destructive/30 bg-destructive/5 text-destructive"
+          : success
+            ? "border-primary/30 bg-primary/8 text-primary"
+            : "border-hairline bg-surface-soft text-steel",
+      )}
+    >
+      {busy ? (
+        <Loader2 size={15} className="mt-0.5 shrink-0 animate-spin" aria-hidden />
+      ) : success ? (
+        <Check size={15} className="mt-0.5 shrink-0" aria-hidden />
+      ) : (
+        <FileText size={15} className="mt-0.5 shrink-0" aria-hidden />
+      )}
+      <span className="min-w-0">{status.message}</span>
+    </div>
+  );
+}
+
 function Field({
   label,
   required,
@@ -501,6 +621,11 @@ type OpmlImportResult = {
   failedCount: number;
 };
 
+type OpmlImportStatus = {
+  state: "idle" | "reading" | "ready" | "importing" | "refreshing" | "success" | "error";
+  message: string;
+};
+
 function isSupportedSourceUri(value: string): boolean {
   const v = value.trim();
   if (!v) return false;
@@ -511,6 +636,19 @@ function isSupportedSourceUri(value: string): boolean {
   try {
     const u = new URL(v);
     return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isFoloShareListUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return (
+      (u.protocol === "http:" || u.protocol === "https:") &&
+      u.hostname === "app.folo.is" &&
+      /^\/share\/lists\/\d+\/?$/.test(u.pathname)
+    );
   } catch {
     return false;
   }

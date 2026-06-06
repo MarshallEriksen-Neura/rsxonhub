@@ -1,7 +1,6 @@
 export const JOB_NAMES = {
   feedFetchDue: "feed.fetch-due",
   feedFetchOne: "feed.fetch-one",
-  articleAnalyze: "article.analyze",
   articleEmbed: "article.embed",
   digestPrepareDaily: "digest.prepare-daily",
   digestGenerateDaily: "digest.generate-daily",
@@ -9,10 +8,6 @@ export const JOB_NAMES = {
 
 export type FeedFetchOneJob = {
   feedId: number;
-};
-
-export type ArticleAnalyzeJob = {
-  articleId: number;
 };
 
 export type ArticleEmbedJob = {

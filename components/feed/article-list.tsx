@@ -354,6 +354,8 @@ export type ArticleView = {
   publishedAt: string;
   imageUrl: string | null;
   summary: string;
+  summaryStatus: "pending" | "complete" | "failed" | null;
+  summaryError: string | null;
   bullets: string[];
   tags: string[];
   importance: Importance;

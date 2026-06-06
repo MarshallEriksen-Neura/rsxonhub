@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json(
-      { error: "SUMMARY_FAILED", message: "摘要生成失败，详细错误已记录。" },
+      { error: "SUMMARY_FAILED", message: msg },
       { status: 500 },
     );
   }

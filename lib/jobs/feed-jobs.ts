@@ -7,7 +7,7 @@ import {
   rebuildArticleEmbeddings,
 } from "@/lib/ai/embedding-rebuild";
 import { db } from "@/lib/db";
-import { articleSummaries, feeds } from "@/lib/db/schema";
+import { feeds } from "@/lib/db/schema";
 import { generateDailyDigest } from "@/lib/digest/generate-digest";
 import {
   attachDigestRunJob,
@@ -23,7 +23,6 @@ import { getActiveInterestProfile } from "@/lib/interests/profile";
 import { startBoss } from "@/lib/jobs/boss";
 import {
   JOB_NAMES,
-  type ArticleAnalyzeJob,
   type ArticleEmbedJob,
   type DigestGenerateDailyJob,
   type DigestPrepareDailyJob,
@@ -33,6 +32,7 @@ import { selectDigestCandidates } from "@/lib/retrieval/hybrid-candidates";
 import { ingestFeed, type IngestFeedResult } from "@/lib/rss/ingest";
 
 const EMBEDDING_REBUILD_EXPIRE_SECONDS = 60 * 60 * 2;
+const DIGEST_CANDIDATE_ANALYSIS_CONCURRENCY = 3;
 
 export async function enqueueFeedFetch(feedId: number) {
   const boss = await startBoss();
@@ -44,20 +44,6 @@ export async function enqueueFeedFetch(feedId: number) {
       retryBackoff: true,
       singletonKey: `feed:${feedId}`,
       singletonSeconds: 60 * 10,
-    },
-  );
-}
-
-export async function enqueueArticleAnalysis(articleId: number) {
-  const boss = await startBoss();
-  return boss.send(
-    JOB_NAMES.articleAnalyze,
-    { articleId } satisfies ArticleAnalyzeJob,
-    {
-      retryLimit: 2,
-      retryBackoff: true,
-      singletonKey: `article.analyze:${articleId}`,
-      singletonSeconds: 60 * 30,
     },
   );
 }
@@ -312,13 +298,6 @@ export async function registerFeedJobs() {
     },
   );
 
-  await boss.work<ArticleAnalyzeJob>(
-    JOB_NAMES.articleAnalyze,
-    async (jobs: Job<ArticleAnalyzeJob>[]) => {
-      await Promise.all(jobs.map((job) => analyzeArticle(job.data.articleId)));
-    },
-  );
-
   await boss.work<ArticleEmbedJob>(
     JOB_NAMES.articleEmbed,
     async (jobs: Job<ArticleEmbedJob>[]) => {
@@ -381,15 +360,15 @@ export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
     await enqueueDueFeedScan();
     const {
       candidateCount,
-      enqueuedAnalysisCount,
-    } = await enqueueAnalysisForSelectedCandidates({ digestDate });
+      analyzedCount,
+    } = await analyzeSelectedDigestCandidates({ digestDate });
 
     await markDigestRunFinished(run.id, {
       status: candidateCount > 0 ? "success" : "skipped",
       error: candidateCount > 0 ? null : "no_candidates",
       metadata: {
         candidateCount,
-        enqueuedAnalysisCount,
+        analyzedCount,
       },
     });
 
@@ -397,7 +376,7 @@ export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
       skipped: candidateCount === 0,
       reason: candidateCount === 0 ? "no_candidates" : null,
       candidateCount,
-      enqueuedAnalysisCount,
+      analyzedCount,
     };
   } catch (error) {
     await markDigestRunFinished(run.id, {
@@ -408,35 +387,41 @@ export async function runDigestPreparation(input: DigestPrepareDailyJob = {}) {
   }
 }
 
-export async function enqueueAnalysisForSelectedCandidates(input: {
+export async function analyzeSelectedDigestCandidates(input: {
   digestDate?: string;
 } = {}) {
   const candidates = await selectDigestCandidates({ digestDate: input.digestDate });
-  const enqueuedAnalysisCount = await enqueueAnalysisForCurrentCandidates(candidates);
+  const analyzedCount = await analyzeCurrentCandidates(candidates);
 
   return {
     candidateCount: candidates.length,
-    enqueuedAnalysisCount,
+    analyzedCount,
   };
 }
 
-export async function enqueueAnalysisForCurrentCandidates(
+export async function analyzeCurrentCandidates(
   candidates: Awaited<ReturnType<typeof selectDigestCandidates>>,
 ) {
   if (candidates.length === 0) return 0;
 
-  const pending = await db
-    .select({ articleId: articleSummaries.articleId })
-    .from(articleSummaries)
-    .where(sql`${articleSummaries.status} = 'pending'`);
-  const pendingIds = new Set(pending.map((row) => row.articleId));
+  let analyzed = 0;
+  let nextIndex = 0;
+  const workerCount = Math.min(
+    DIGEST_CANDIDATE_ANALYSIS_CONCURRENCY,
+    candidates.length,
+  );
 
-  let enqueued = 0;
-  for (const candidate of candidates) {
-    if (pendingIds.has(candidate.articleId)) continue;
-    await enqueueArticleAnalysis(candidate.articleId);
-    enqueued += 1;
-  }
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < candidates.length) {
+        const candidate = candidates[nextIndex];
+        nextIndex += 1;
+        if (!candidate) continue;
+        await analyzeArticle(candidate.articleId);
+        analyzed += 1;
+      }
+    }),
+  );
 
-  return enqueued;
+  return analyzed;
 }

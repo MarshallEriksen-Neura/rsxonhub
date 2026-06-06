@@ -23,15 +23,16 @@ import {
   embeddingConfigPlanChanged,
 } from "@/lib/ai/config-plan";
 import {
-  attachEmbeddingRebuildRunJob,
-  createEmbeddingRebuildRun,
   getEmbeddingVectorDimension,
   getLatestEmbeddingRebuildRun,
-  markEmbeddingRebuildRunFailed,
   prepareEmbeddingDimensionRebuild,
   probeEmbeddingDimension,
 } from "@/lib/ai/embedding-rebuild";
 import { planEmbeddingRebuild } from "@/lib/ai/embedding-rebuild-plan";
+import {
+  createAndEnqueueEmbeddingRebuildRun,
+  startEmbeddingRebuildForCurrentModel,
+} from "@/lib/ai/embedding-rebuild-service";
 import {
   inferModelCapabilities,
   type AIModelCapability,
@@ -48,8 +49,7 @@ import {
 } from "@/lib/db/schema";
 import { getActiveInterestProfile, saveInterestProfile } from "@/lib/interests/profile";
 import {
-  enqueueAnalysisForSelectedCandidates,
-  enqueueArticleEmbedding,
+  analyzeSelectedDigestCandidates,
 } from "@/lib/jobs/feed-jobs";
 
 export type SaveAISettingsState =
@@ -455,7 +455,7 @@ export type SaveInterestProfileState =
       ok: true;
       content: string;
       version: number;
-      enqueued: number;
+      analyzed: number;
       message: string;
     }
   | {
@@ -480,8 +480,8 @@ export async function saveInterestProfileSettings(
   try {
     const parsed = saveInterestProfileSchema.parse(input);
     const { profile, changed } = await saveInterestProfile(parsed.content);
-    const enqueued = changed
-      ? (await enqueueAnalysisForSelectedCandidates()).enqueuedAnalysisCount
+    const analyzed = changed
+      ? (await analyzeSelectedDigestCandidates()).analyzedCount
       : 0;
     revalidatePath("/settings");
 
@@ -489,9 +489,9 @@ export async function saveInterestProfileSettings(
       ok: true,
       content: profile.content,
       version: profile.version,
-      enqueued,
+      analyzed,
       message: changed
-        ? `兴趣画像已保存为 v${profile.version},已入队 ${enqueued} 个候选分析任务。`
+        ? `兴趣画像已保存为 v${profile.version},已实时分析 ${analyzed} 个候选文章。`
         : `兴趣画像未变化,仍为 v${profile.version}。`,
     };
   } catch (error) {
@@ -518,42 +518,19 @@ export type RebuildEmbeddingIndexState =
 
 export async function rebuildEmbeddingIndexForCurrentModel(): Promise<RebuildEmbeddingIndexState> {
   try {
-    const probedDimension = await probeEmbeddingDimension();
-    await prepareEmbeddingDimensionRebuild(probedDimension);
-    const [chatConfig, embeddingConfig] = await Promise.all([
-      getChatConfig(),
-      getEmbeddingConfig(),
-    ]);
-    await upsertAIConfigs(chatConfig, { ...embeddingConfig, dimension: probedDimension });
-    const rebuildRunId = await createAndEnqueueEmbeddingRebuildRun();
+    const { rebuildRunId, message } = await startEmbeddingRebuildForCurrentModel();
     revalidatePath("/settings");
 
     return {
       ok: true,
       rebuildRunId,
-      message: `向量索引已切换为 ${probedDimension} 维,重建任务 #${rebuildRunId} 已入队。`,
+      message,
     };
   } catch (error) {
     return {
       ok: false,
       message: error instanceof Error ? error.message : "重建向量索引失败。",
     };
-  }
-}
-
-async function createAndEnqueueEmbeddingRebuildRun() {
-  const run = await createEmbeddingRebuildRun();
-
-  try {
-    const jobId = await enqueueArticleEmbedding({ rebuildRunId: run.id });
-    if (!jobId) {
-      throw new Error("向量重建任务没有返回 jobId,可能被 pg-boss singleton 规则跳过。");
-    }
-    await attachEmbeddingRebuildRunJob(run.id, jobId);
-    return run.id;
-  } catch (error) {
-    await markEmbeddingRebuildRunFailed(run.id, error);
-    throw error;
   }
 }
 

@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ExternalLink,
   MessagesSquare,
   FileText,
+  AlertCircle,
   Sparkles,
   X,
   Star,
@@ -209,7 +210,7 @@ export function ArticleDetail() {
         </header>
 
         {/* AI 摘要(按需加载) */}
-        <AiSummary article={visibleArticle} />
+        <AiSummary key={visibleArticle.id} article={visibleArticle} />
 
         {/* 文章题图(点击可放大) */}
         {visibleArticle.imageUrl ? (
@@ -387,6 +388,7 @@ function FullscreenArticleReader({
 }
 
 type SummaryData = { summary: string; bullets: string[]; tags: string[]; importance: number };
+const SUMMARY_REQUEST_TIMEOUT_MS = 90_000;
 
 /**
  * AI 摘要。
@@ -394,33 +396,26 @@ type SummaryData = { summary: string; bullets: string[]; tags: string[]; importa
  * 未配置 AI 时 toast 提示。
  */
 function AiSummary({ article }: { article: ArticleView }) {
-  // 以 article.summary 作为初始值，切换文章时重置
   const [data, setData] = useState<SummaryData | null>(
-    article.summary.trim() ? { summary: article.summary, bullets: article.bullets, tags: article.tags, importance: 0 } : null,
+    summaryDataFromArticle(article),
+  );
+  const [error, setError] = useState<string | null>(
+    article.summaryStatus === "failed" ? article.summaryError ?? "摘要生成失败" : null,
   );
   const [loading, setLoading] = useState(false);
-  const articleIdRef = useRef(article.id);
-
-  // 文章切换时重置
-  if (articleIdRef.current !== article.id) {
-    articleIdRef.current = article.id;
-    const next = article.summary.trim()
-      ? { summary: article.summary, bullets: article.bullets, tags: article.tags, importance: 0 }
-      : null;
-    // 直接赋值（render 中同步更新，避免 stale）
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    setData(next);
-    setLoading(false);
-  }
 
   async function handleOpen(open: boolean) {
     if (!open || data || loading) return;
 
     setLoading(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SUMMARY_REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch("/api/articles/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({ articleId: article.id }),
       });
       const payload = await res.json();
@@ -431,15 +426,24 @@ function AiSummary({ article }: { article: ArticleView }) {
         } else {
           toast.error(payload.message ?? "摘要生成失败");
         }
+        setError(payload.message ?? "摘要生成失败");
         return;
       }
 
       if (payload.summary) {
         setData(payload.summary);
+      } else {
+        setError("摘要生成没有返回内容，请重试。");
       }
-    } catch {
-      toast.error("网络错误，摘要加载失败");
+    } catch (requestError) {
+      const message =
+        requestError instanceof DOMException && requestError.name === "AbortError"
+          ? "摘要生成超时，请稍后重试。"
+          : "网络错误，摘要加载失败";
+      setError(message);
+      toast.error(message);
     } finally {
+      clearTimeout(timeout);
       setLoading(false);
     }
   }
@@ -456,7 +460,7 @@ function AiSummary({ article }: { article: ArticleView }) {
             AI 摘要
           </span>
           {!data && !loading && (
-            <span className="text-caption text-stone">暂无</span>
+            <span className="text-caption text-stone">{error ? "失败" : "暂无"}</span>
           )}
         </Accordion.Header>
         <Accordion.Content className="flex flex-col gap-4 px-5 pb-5 pt-0">
@@ -477,6 +481,22 @@ function AiSummary({ article }: { article: ArticleView }) {
                 </ul>
               )}
             </>
+          ) : error ? (
+            <div className="flex flex-col gap-3 text-body-sm leading-relaxed text-stone">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" aria-hidden />
+                <span className="min-w-0 whitespace-pre-wrap break-words">{error}</span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleOpen(true)}
+                className="w-fit"
+              >
+                重新生成
+              </Button>
+            </div>
           ) : (
             <p className="text-body-sm leading-relaxed text-stone">暂无 AI 摘要。</p>
           )}
@@ -484,6 +504,17 @@ function AiSummary({ article }: { article: ArticleView }) {
       </Accordion.Item>
     </Accordion>
   );
+}
+
+function summaryDataFromArticle(article: ArticleView): SummaryData | null {
+  return article.summary.trim()
+    ? {
+        summary: article.summary,
+        bullets: article.bullets,
+        tags: article.tags,
+        importance: 0,
+      }
+    : null;
 }
 
 /** 封面图点击触发 lightbox 的包装 */

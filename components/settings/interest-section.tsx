@@ -2,14 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { AlertCircle, Check, Database, Loader2, Target } from "lucide-react";
-import {
-  rebuildEmbeddingIndexForCurrentModel,
-  saveInterestProfileSettings,
-} from "@/app/(app)/settings/actions";
+import { saveInterestProfileSettings } from "@/app/(app)/settings/actions";
 import { Button } from "@/components/retroui/Button";
 import { Textarea } from "@/components/retroui/Textarea";
 import { cn } from "@/lib/utils";
 import type { ActiveInterestProfile } from "@/lib/interests/profile";
+import { EmbeddingRebuildButton } from "./embedding-rebuild-button";
 import { SectionHeader } from "./section-header";
 
 export function InterestSection({
@@ -57,20 +55,6 @@ export function InterestSection({
     });
   }
 
-  function rebuildIndex() {
-    startTransition(async () => {
-      const result = await rebuildEmbeddingIndexForCurrentModel();
-      if (!result.ok) {
-        setError(result.message);
-        return;
-      }
-
-      setPendingRebuild(null);
-      setError(null);
-      setNotice(result.message);
-    });
-  }
-
   return (
     <section>
       <SectionHeader
@@ -113,14 +97,22 @@ export function InterestSection({
             当前索引维度 {pendingRebuild.expectedDimension} · 当前模型维度 {pendingRebuild.probedDimension}
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={rebuildIndex} disabled={isPending} className="gap-1.5">
-              {isPending ? (
-                <Loader2 size={14} aria-hidden className="animate-spin" />
-              ) : (
-                <Database size={14} aria-hidden />
-              )}
-              重建向量索引
-            </Button>
+            <EmbeddingRebuildButton
+              label="重建向量索引"
+              pendingLabel="重建入队中"
+              disabled={isPending}
+              className="gap-1.5"
+              onResult={(result) => {
+                if (!result.ok) {
+                  setError(result.message);
+                  return;
+                }
+
+                setPendingRebuild(null);
+                setError(null);
+                setNotice(result.message);
+              }}
+            />
             <Button size="sm" variant="outline" onClick={() => setPendingRebuild(null)}>
               取消
             </Button>
@@ -136,7 +128,7 @@ export function InterestSection({
           <div>
             <h3 className="text-body font-medium text-ink">日报候选选择输入</h3>
             <p className="mt-1 text-body-sm text-steel">
-              保存后会生成当前候选集，并只为候选文章入队 AI 摘要任务。
+              保存后会生成当前候选集，并实时分析候选文章摘要。
             </p>
           </div>
           {version ? (

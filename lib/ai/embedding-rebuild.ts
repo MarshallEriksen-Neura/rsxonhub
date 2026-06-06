@@ -128,8 +128,17 @@ export async function getLatestEmbeddingRebuildRun() {
   return run ?? null;
 }
 
+export async function getEmbeddingRebuildRun(id: number) {
+  const [run] = await db
+    .select()
+    .from(embeddingRebuildRuns)
+    .where(eq(embeddingRebuildRuns.id, id))
+    .limit(1);
+  return run ?? null;
+}
+
 export async function rebuildArticleEmbeddings(rebuildRunId?: number) {
-  const run = rebuildRunId ? await getRebuildRun(rebuildRunId) : null;
+  const run = rebuildRunId ? await requireRebuildRun(rebuildRunId) : null;
   const totalArticleCount = run?.totalArticleCount || await countEmbeddingSourceArticles();
   let progress: EmbeddingRebuildProgress = {
     articleCount: run?.articleCount ?? 0,
@@ -303,12 +312,8 @@ async function embedArticle(articleId: number, text: string, title?: string) {
   return { articleId, chunkCount: chunks.length };
 }
 
-async function getRebuildRun(id: number) {
-  const [run] = await db
-    .select()
-    .from(embeddingRebuildRuns)
-    .where(eq(embeddingRebuildRuns.id, id))
-    .limit(1);
+async function requireRebuildRun(id: number) {
+  const run = await getEmbeddingRebuildRun(id);
   if (!run) throw new Error(`Embedding rebuild run not found: ${id}`);
   return run;
 }
