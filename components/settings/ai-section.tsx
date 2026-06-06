@@ -324,14 +324,14 @@ export function AISection({
 
       {pendingRebuild ? (
         <div className="mb-5 flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-body-sm text-charcoal">
-          <div className="font-medium text-destructive">需要重建文章向量</div>
+          <div className="font-medium text-destructive">需要重建向量索引</div>
           <p>{pendingRebuild.message}</p>
           <div className="text-micro text-steel">
-            现有 {pendingRebuild.existingChunkCount} 个 chunks · probe 维度 {pendingRebuild.probedDimension} · 表维度 {pendingRebuild.expectedDimension}
+            现有 {pendingRebuild.existingChunkCount} 个 chunks · 新模型维度 {pendingRebuild.probedDimension} · 当前索引维度 {pendingRebuild.expectedDimension}
           </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={() => save(true)} disabled={isPending}>
-              确认保存并后台重建
+              保存并重建向量
             </Button>
             <Button size="sm" variant="outline" onClick={() => setPendingRebuild(null)}>
               取消

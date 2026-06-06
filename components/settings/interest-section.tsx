@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { AlertCircle, Check, Loader2, Target } from "lucide-react";
-import { saveInterestProfileSettings } from "@/app/(app)/settings/actions";
+import { AlertCircle, Check, Database, Loader2, Target } from "lucide-react";
+import {
+  rebuildEmbeddingIndexForCurrentModel,
+  saveInterestProfileSettings,
+} from "@/app/(app)/settings/actions";
 import { Button } from "@/components/retroui/Button";
 import { Textarea } from "@/components/retroui/Textarea";
 import { cn } from "@/lib/utils";
@@ -18,6 +21,11 @@ export function InterestSection({
   const [version, setVersion] = useState(initialProfile?.version ?? null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRebuild, setPendingRebuild] = useState<{
+    message: string;
+    probedDimension: number;
+    expectedDimension: number;
+  } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const dirty = content.trim() !== (initialProfile?.content ?? "").trim();
@@ -27,12 +35,37 @@ export function InterestSection({
     startTransition(async () => {
       const result = await saveInterestProfileSettings({ content });
       if (!result.ok) {
+        if ("kind" in result && result.kind === "embedding-rebuild-required") {
+          setPendingRebuild({
+            message: result.message,
+            probedDimension: result.probedDimension,
+            expectedDimension: result.expectedDimension,
+          });
+          setError(null);
+          setNotice(null);
+          return;
+        }
         setError(result.message);
         setNotice(null);
         return;
       }
 
       setVersion(result.version);
+      setError(null);
+      setPendingRebuild(null);
+      setNotice(result.message);
+    });
+  }
+
+  function rebuildIndex() {
+    startTransition(async () => {
+      const result = await rebuildEmbeddingIndexForCurrentModel();
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+
+      setPendingRebuild(null);
       setError(null);
       setNotice(result.message);
     });
@@ -69,6 +102,32 @@ export function InterestSection({
         </div>
       )}
 
+      {pendingRebuild ? (
+        <div className="mb-5 flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-body-sm text-charcoal">
+          <div className="flex items-center gap-2 font-medium text-destructive">
+            <Database size={15} aria-hidden />
+            需要重建向量索引
+          </div>
+          <p>{pendingRebuild.message}</p>
+          <div className="text-micro text-steel">
+            当前索引维度 {pendingRebuild.expectedDimension} · 当前模型维度 {pendingRebuild.probedDimension}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={rebuildIndex} disabled={isPending} className="gap-1.5">
+              {isPending ? (
+                <Loader2 size={14} aria-hidden className="animate-spin" />
+              ) : (
+                <Database size={14} aria-hidden />
+              )}
+              重建向量索引
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setPendingRebuild(null)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="rounded-lg border border-hairline bg-background">
         <div className="flex items-start gap-3 border-b border-hairline p-5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
@@ -94,6 +153,7 @@ export function InterestSection({
               setContent(event.target.value);
               setNotice(null);
               setError(null);
+              setPendingRebuild(null);
             }}
             rows={12}
             placeholder="例如：我关注 AI agent、开源基础设施、RSS/RAG 产品设计、模型推理成本、开发者工具，以及与个人知识管理相关的高质量研究或实践。"

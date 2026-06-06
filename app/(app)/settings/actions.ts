@@ -21,12 +21,14 @@ import {
   buildNextAIConfigPlan,
   embeddingConfigPlanChanged,
 } from "@/lib/ai/config-plan";
-import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
 import {
   createEmbeddingRebuildRun,
+  getEmbeddingVectorDimension,
   getLatestEmbeddingRebuildRun,
+  prepareEmbeddingDimensionRebuild,
   probeEmbeddingDimension,
 } from "@/lib/ai/embedding-rebuild";
+import { planEmbeddingRebuild } from "@/lib/ai/embedding-rebuild-plan";
 import {
   inferModelCapabilities,
   type AIModelCapability,
@@ -77,35 +79,42 @@ export async function saveAISettings(
     ]);
     const { chat, embedding } = buildNextAIConfigPlan(parsed, existingChat, existingEmbedding);
     const embeddingChanged = embeddingConfigPlanChanged(existingEmbedding, embedding);
+    let embeddingToSave = embedding;
     let rebuildRunId: number | null = null;
 
     if (embeddingChanged) {
       const probedDimension = await probeEmbeddingDimension();
-      if (probedDimension !== DEFAULT_EMBEDDING_DIM) {
-        return {
-          ok: false,
-          message: `向量模型维度为 ${probedDimension},但当前 article_chunks.embedding 需要 ${DEFAULT_EMBEDDING_DIM}。请先调整迁移和重建计划。`,
-        };
-      }
-
+      embeddingToSave = { ...embedding, dimension: probedDimension };
       const [{ count }] = await db
         .select({ count: sql<number>`count(*)` })
         .from(articleChunks);
       const existingChunkCount = Number(count ?? 0);
+      const expectedDimension = await getEmbeddingVectorDimension("article_chunks");
+      const rebuildPlan = planEmbeddingRebuild({
+        embeddingChanged,
+        existingChunkCount,
+        probedDimension,
+        expectedDimension,
+        confirmed: Boolean(input.confirmEmbeddingRebuild),
+      });
 
-      if (existingChunkCount > 0 && !input.confirmEmbeddingRebuild) {
+      if (rebuildPlan.action === "confirm") {
         return {
           ok: false,
           kind: "embedding-rebuild-required",
-          message: "向量模型或 Base URL 已变化,现有文章向量需要后台重建。确认后保存会立即返回,重建在 worker 中静默执行。",
-          existingChunkCount,
-          probedDimension,
-          expectedDimension: DEFAULT_EMBEDDING_DIM,
+          message: rebuildPlan.message,
+          existingChunkCount: rebuildPlan.existingChunkCount,
+          probedDimension: rebuildPlan.probedDimension,
+          expectedDimension: rebuildPlan.expectedDimension,
         };
+      }
+
+      if (rebuildPlan.action === "rebuild" && rebuildPlan.resizeDimension) {
+        await prepareEmbeddingDimensionRebuild(rebuildPlan.resizeDimension);
       }
     }
 
-    const config = await upsertAIConfigs(chat, embedding);
+    const config = await upsertAIConfigs(chat, embeddingToSave);
 
     if (embeddingChanged) {
       const run = await createEmbeddingRebuildRun();
@@ -442,6 +451,13 @@ export type SaveInterestProfileState =
     }
   | {
       ok: false;
+      kind: "embedding-rebuild-required";
+      message: string;
+      probedDimension: number;
+      expectedDimension: number;
+    }
+  | {
+      ok: false;
       message: string;
     };
 
@@ -470,9 +486,49 @@ export async function saveInterestProfileSettings(
         : `兴趣画像未变化,仍为 v${profile.version}。`,
     };
   } catch (error) {
+    const dimensionMismatch = parseEmbeddingDimensionMismatch(error);
+    if (dimensionMismatch) {
+      return {
+        ok: false,
+        kind: "embedding-rebuild-required",
+        message: "当前向量索引维度与向量模型不一致。请先重建向量索引,完成后再保存画像。",
+        ...dimensionMismatch,
+      };
+    }
+
     return {
       ok: false,
       message: error instanceof Error ? error.message : "保存兴趣画像失败。",
+    };
+  }
+}
+
+export type RebuildEmbeddingIndexState =
+  | { ok: true; rebuildRunId: number; message: string }
+  | { ok: false; message: string };
+
+export async function rebuildEmbeddingIndexForCurrentModel(): Promise<RebuildEmbeddingIndexState> {
+  try {
+    const probedDimension = await probeEmbeddingDimension();
+    await prepareEmbeddingDimensionRebuild(probedDimension);
+    const [chatConfig, embeddingConfig] = await Promise.all([
+      getChatConfig(),
+      getEmbeddingConfig(),
+    ]);
+    await upsertAIConfigs(chatConfig, { ...embeddingConfig, dimension: probedDimension });
+    const run = await createEmbeddingRebuildRun();
+    await enqueueArticleEmbedding({ rebuildRunId: run.id });
+    revalidatePath("/settings");
+
+    return {
+      ok: true,
+      rebuildRunId: run.id,
+      message: `向量索引已切换为 ${probedDimension} 维,重建任务 #${run.id} 已入队。`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "重建向量索引失败。",
     };
   }
 }
@@ -645,4 +701,15 @@ function previewBody(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseEmbeddingDimensionMismatch(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/向量模型维度为 (\d+),但当前数据库向量列需要 (\d+)/);
+  if (!match) return null;
+
+  return {
+    probedDimension: Number(match[1]),
+    expectedDimension: Number(match[2]),
+  };
 }

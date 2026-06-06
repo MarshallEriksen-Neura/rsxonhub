@@ -14,12 +14,15 @@ mock.module("ai", () => ({
 }));
 
 mock.module("@/lib/ai", () => ({
-  EMBEDDING_DIM: 2048,
   embeddingModelWithConfig: mock(async () => ({
     config: { model: "bad-dimension-model" },
     model: "embedding-model",
   })),
   withAIRequestRetry: mock((operation: () => Promise<unknown>) => operation()),
+}));
+
+mock.module("@/lib/ai/embedding-rebuild", () => ({
+  getEmbeddingVectorDimension: mock(async () => 2048),
 }));
 
 mock.module("@/lib/db", () => ({

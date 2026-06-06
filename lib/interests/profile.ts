@@ -1,10 +1,10 @@
 import { embed } from "ai";
 import { desc, eq, sql } from "drizzle-orm";
 import {
-  EMBEDDING_DIM,
   embeddingModelWithConfig,
   withAIRequestRetry,
 } from "@/lib/ai";
+import { getEmbeddingVectorDimension } from "@/lib/ai/embedding-rebuild";
 import { db } from "@/lib/db";
 import { interestProfiles, usageLogs } from "@/lib/db/schema";
 import { stableHash } from "@/lib/rss/hash";
@@ -106,9 +106,10 @@ async function embedInterestProfile(content: string) {
       value: content,
     }),
   );
-  if (result.embedding.length !== EMBEDDING_DIM) {
+  const expectedDimension = await getEmbeddingVectorDimension("interest_profiles");
+  if (result.embedding.length !== expectedDimension) {
     throw new Error(
-      `向量模型维度为 ${result.embedding.length},但当前数据库向量列需要 ${EMBEDDING_DIM}。请在设置页切换为 ${EMBEDDING_DIM} 维向量模型,或先调整向量列迁移和重建计划。`,
+      `向量模型维度为 ${result.embedding.length},但当前数据库向量列需要 ${expectedDimension}。请点击重建向量索引,完成后再保存画像。`,
     );
   }
 

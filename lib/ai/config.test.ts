@@ -5,6 +5,7 @@ import {
   type ChatConfigPlanInput,
   type EmbeddingConfigPlanInput,
 } from "@/lib/ai/config-plan";
+import { DEFAULT_EMBEDDING_DIM } from "@/lib/ai/defaults";
 
 describe("AI config save planning", () => {
   const chat: ChatConfigPlanInput = {
@@ -20,7 +21,7 @@ describe("AI config save planning", () => {
     baseUrl: "https://old-embedding.example/v1",
     apiKey: "old-embedding-key",
     model: "old-embedding",
-    dimension: 2048,
+    dimension: DEFAULT_EMBEDDING_DIM,
   };
 
   test("detects embedding model/base changes only", () => {

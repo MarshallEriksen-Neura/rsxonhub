@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import {
   articleChunks,
   articles,
+  interestProfiles,
   embeddingRebuildRuns,
   usageLogs,
 } from "@/lib/db/schema";
@@ -36,6 +37,27 @@ export async function probeEmbeddingDimension() {
   return result.embedding.length;
 }
 
+export async function getEmbeddingVectorDimension(
+  tableName: "article_chunks" | "interest_profiles" = "interest_profiles",
+) {
+  const [row] = await db.execute<{ dimension: number | null }>(sql`
+    select a.atttypmod::int as dimension
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = ${tableName}
+      and a.attname = 'embedding'
+      and not a.attisdropped
+    limit 1
+  `);
+  const dimension = Number(row?.dimension);
+  if (!Number.isInteger(dimension) || dimension <= 0) {
+    throw new Error(`无法读取 ${tableName}.embedding 的向量维度。`);
+  }
+  return dimension;
+}
+
 export async function createEmbeddingRebuildRun() {
   const config = await getEmbeddingConfig();
   const [run] = await db
@@ -49,6 +71,27 @@ export async function createEmbeddingRebuildRun() {
     .returning();
 
   return run;
+}
+
+export async function prepareEmbeddingDimensionRebuild(dimension: number) {
+  assertSupportedVectorDimension(dimension);
+
+  await db.transaction(async (tx) => {
+    await tx.delete(articleChunks);
+    await tx
+      .update(interestProfiles)
+      .set({ embedding: null, updatedAt: sql`now()` });
+    await tx.execute(
+      sql.raw(
+        `ALTER TABLE "article_chunks" ALTER COLUMN "embedding" TYPE vector(${dimension}) USING NULL::vector(${dimension})`,
+      ),
+    );
+    await tx.execute(
+      sql.raw(
+        `ALTER TABLE "interest_profiles" ALTER COLUMN "embedding" TYPE vector(${dimension}) USING NULL::vector(${dimension})`,
+      ),
+    );
+  });
 }
 
 export async function getLatestEmbeddingRebuildRun() {
@@ -233,6 +276,12 @@ function buildArticleEmbeddingText(article: {
 }) {
   // summaryRaw 是 content 的前几句，拼入会造成第一个 chunk 语义重复；title 已通过 titlePrefix 注入每个 chunk
   return [article.content ?? article.summaryRaw].filter(Boolean).join("\n\n");
+}
+
+function assertSupportedVectorDimension(dimension: number) {
+  if (!Number.isInteger(dimension) || dimension <= 0 || dimension > 16000) {
+    throw new Error(`不支持的向量维度: ${dimension}`);
+  }
 }
 
 
