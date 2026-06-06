@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw, Search, Star } from "lucide-react";
+import { CheckCheck, RefreshCw, Search, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type Importance } from "@/lib/mock/feed";
 import { useFeedStore } from "@/lib/stores/feed";
@@ -48,7 +48,9 @@ export function ArticleList() {
   const selectedArticleId = useFeedStore((s) => s.selectedArticleId);
   const selectArticle = useFeedStore((s) => s.selectArticle);
   const setFeeds = useFeedStore((s) => s.setFeeds);
+  const markFeedsRead = useFeedStore((s) => s.markFeedsRead);
   const [refreshing, setRefreshing] = useState(false);
+  const [markingRead, setMarkingRead] = useState(false);
   const [sort, setSort] = useState<ArticleSort>("latest");
 
   // 使用虚拟滚动 Hook
@@ -130,6 +132,42 @@ export function ArticleList() {
     }
   }
 
+  async function handleMarkAllRead() {
+    setMarkingRead(true);
+    const trimmedSearch = search.trim();
+    try {
+      const response = await fetch("/api/articles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "mark-all-read",
+          ...(selectedFeedId ? { feedId: selectedFeedId } : {}),
+          ...(trimmedSearch ? { search: trimmedSearch } : {}),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message ?? "一键已读失败");
+      }
+      if (!trimmedSearch) {
+        markFeedsRead(selectedFeedId);
+      }
+      await refreshFeedsSnapshot();
+      await loadInitial(fetchArticles);
+      toast.success(
+        trimmedSearch
+          ? "匹配文章已标为已读"
+          : selectedFeedId
+            ? "当前订阅源已全部标为已读"
+            : "全部文章已标为已读",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "一键已读失败");
+    } finally {
+      setMarkingRead(false);
+    }
+  }
+
   return (
     <section className="flex h-full w-96 shrink-0 flex-col overflow-hidden border-r border-hairline bg-background">
       {/* 搜索和筛选 */}
@@ -166,22 +204,40 @@ export function ArticleList() {
               重要度
             </Button>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            title={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
-            aria-label={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
-            onClick={() => void handleRefresh()}
-            disabled={refreshing}
-            className="shrink-0 rounded-full"
-          >
-            <RefreshCw
-              size={15}
-              aria-hidden
-              className={cn(refreshing && "animate-spin")}
-            />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title={selectedFeedId ? "当前订阅源全部已读" : "全部文章已读"}
+              aria-label={selectedFeedId ? "当前订阅源全部已读" : "全部文章已读"}
+              onClick={() => void handleMarkAllRead()}
+              disabled={markingRead || state.isLoading}
+              className="shrink-0 rounded-full"
+            >
+              <CheckCheck
+                size={15}
+                aria-hidden
+                className={cn(markingRead && "animate-pulse")}
+              />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
+              aria-label={selectedFeedId ? "抓取当前订阅源" : "抓取全部订阅源"}
+              onClick={() => void handleRefresh()}
+              disabled={refreshing}
+              className="shrink-0 rounded-full"
+            >
+              <RefreshCw
+                size={15}
+                aria-hidden
+                className={cn(refreshing && "animate-spin")}
+              />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -204,6 +260,7 @@ export function ArticleList() {
         }}
         renderItem={(item) => (
           <ArticleListItem
+            key={`${item.data.id}-${item.data.status}`}
             article={item.data}
             active={selectedArticleId === item.data.id}
             onSelect={() => {

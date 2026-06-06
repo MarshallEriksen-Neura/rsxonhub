@@ -6,6 +6,8 @@
 
 ## 功能
 
+![功能概览](docs/images/features.png)
+
 | 模块 | 说明 |
 |------|------|
 | 📡 RSS 订阅管理 | 添加/删除 Feed，RSSHub 代理，订阅统计 |
@@ -28,6 +30,10 @@
 ### 队列状态
 
 ![队列状态](docs/images/queue-status.png)
+
+## 架构
+
+![系统架构](docs/images/architecture.png)
 
 ## 技术栈
 
@@ -64,11 +70,9 @@ bun run worker
 ```env
 DATABASE_URL=postgresql://user:pass@localhost:5432/rsxonhub
 AUTH_SECRET=<随机长字符串，可用 openssl rand -base64 32 生成>
-
-# AI 接口（也可在应用内 /settings 页面配置）
-AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=sk-...
 ```
+
+> AI 接口（Base URL、API Key、模型）在应用内 **设置页面** 中配置，无需写入环境变量。
 
 ## 常用命令
 
@@ -105,6 +109,10 @@ bun run db:studio    # 打开 Drizzle Studio
 - [数据库迁移](docs/database-migration.md)
 - [部署清单](docs/deployment-checklist.md)
 - [部署快速参考](docs/quick-deployment-reference.md)
+
+## AI 接口推荐
+
+本项目开发使用 [Unity2.ai](https://unity2.ai/dashboard) 提供的免费 Token 驱动。支持纯血 Claude、ChatGPT 等主流模型，价格实惠。
 
 ## 社区与更新
 

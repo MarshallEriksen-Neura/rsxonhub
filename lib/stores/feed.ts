@@ -47,6 +47,8 @@ interface FeedState {
   updateFeed: (id: number, patch: FeedPatch) => void;
   /** 从侧栏快照移除;持久化删除由 /api/feeds 负责。 */
   removeFeed: (id: number) => void;
+  /** 将已加载侧栏快照中的未读数清零;持久化修改由 /api/articles 负责。 */
+  markFeedsRead: (id?: number | null) => void;
   /** 新建一个本地空分类。已存在(无论有无源)则忽略。返回是否新建成功。 */
   addFolder: (name: string) => boolean;
   /** 重命名本地空分类,并同步已加载的侧栏快照。 */
@@ -98,6 +100,12 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     set((state) => ({
       feeds: state.feeds.filter((f) => f.id !== id),
       selectedFeedId: state.selectedFeedId === id ? null : state.selectedFeedId,
+    })),
+  markFeedsRead: (id) =>
+    set((state) => ({
+      feeds: state.feeds.map((f) =>
+        id == null || f.id === id ? { ...f, unread: 0 } : f,
+      ),
     })),
   addFolder: (name) => {
     const next = name.trim();

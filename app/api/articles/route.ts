@@ -11,6 +11,8 @@ import {
 import { toIsoString } from "@/lib/datetime";
 import { sanitizeArticleHtml } from "@/lib/rss/sanitize";
 
+const validArticleStatuses = ["unread", "read", "star", "later"] as const;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const view = searchParams.get("view") ?? "all";
@@ -152,6 +154,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    if (body?.action === "mark-all-read") {
+      return markAllRead(body);
+    }
+
     const { articleId, status } = body as {
       articleId: number;
       status: "unread" | "read" | "star" | "later";
@@ -164,8 +170,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const validStatuses = ["unread", "read", "star", "later"] as const;
-    if (!validStatuses.includes(status)) {
+    if (!validArticleStatuses.includes(status)) {
       return NextResponse.json(
         { message: "无效的 status 值" },
         { status: 400 },
@@ -189,6 +194,53 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+async function markAllRead(body: unknown) {
+  const { feedId, search } = body as {
+    feedId?: number | null;
+    search?: string | null;
+  };
+  const conditions = [
+    sql`(${readStates.status} = 'unread' or ${readStates.id} is null)`,
+  ];
+
+  if (feedId != null) {
+    if (!Number.isSafeInteger(feedId) || feedId <= 0) {
+      return NextResponse.json(
+        { message: "无效的 feedId 值" },
+        { status: 400 },
+      );
+    }
+    conditions.push(eq(articles.feedId, feedId));
+  }
+
+  const trimmedSearch = search?.trim();
+  if (trimmedSearch) {
+    const pattern = `%${trimmedSearch}%`;
+    const searchCondition = or(
+      ilike(articles.title, pattern),
+      ilike(articles.summaryRaw, pattern),
+      ilike(articles.content, pattern),
+    );
+    if (searchCondition) conditions.push(searchCondition);
+  }
+  const whereClause = sql.join(conditions, sql` and `) ?? sql`true`;
+
+  await db.execute(sql`
+    insert into read_states (article_id, status)
+    select ${articles.id}, 'read'
+    from ${articles}
+    left join ${readStates} on ${readStates.articleId} = ${articles.id}
+    where ${whereClause}
+    on conflict (article_id)
+    do update set
+      status = 'read',
+      updated_at = now()
+    where ${readStates.status} = 'unread'
+  `);
+
+  return NextResponse.json({ success: true, status: "read" });
 }
 
 function numberParam(value: string | null) {
