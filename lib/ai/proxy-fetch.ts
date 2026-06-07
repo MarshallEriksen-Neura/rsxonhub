@@ -2,6 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
+import { proxyAuthorizationHeader } from "@/lib/proxy-auth";
 
 const DEFAULT_AI_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -369,15 +370,6 @@ function parseHttpProxyUrl(value: string) {
     throw new Error("AI_PROXY_URL must use http.");
   }
   return parsed;
-}
-
-function proxyAuthorizationHeader(proxy: URL) {
-  if (!proxy.username && !proxy.password) return {};
-  return {
-    "Proxy-Authorization": `Basic ${Buffer.from(
-      `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`,
-    ).toString("base64")}`,
-  };
 }
 
 function aiRequestTimeoutMs() {

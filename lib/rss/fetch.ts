@@ -3,6 +3,7 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import zlib from "node:zlib";
+import { proxyAuthorizationHeader } from "@/lib/proxy-auth";
 
 export const FEED_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -281,15 +282,6 @@ function parseProxyUrl(value: string) {
     throw new Error("RSS_FETCH_PROXY must use http.");
   }
   return parsed;
-}
-
-function proxyAuthorizationHeader(proxy: URL) {
-  if (!proxy.username && !proxy.password) return {};
-  return {
-    "Proxy-Authorization": `Basic ${Buffer.from(
-      `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`,
-    ).toString("base64")}`,
-  };
 }
 
 function responseEncoding(contentType: string | string[] | undefined): BufferEncoding {

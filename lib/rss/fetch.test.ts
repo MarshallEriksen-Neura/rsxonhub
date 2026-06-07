@@ -43,6 +43,66 @@ describe("RSS feed fetch", () => {
     await close(proxy);
   });
 
+  test("accepts proxy credentials with malformed percent escapes", async () => {
+    const seenProxyAuthorizations: Array<string | undefined> = [];
+    const proxy = http.createServer((req, res) => {
+      seenProxyAuthorizations.push(req.headers["proxy-authorization"]);
+      res.writeHead(200, {
+        "Content-Type": "application/rss+xml; charset=utf-8",
+      });
+      res.end(
+        "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Proxy Feed</title></channel></rss>",
+      );
+    });
+
+    await listen(proxy);
+    const address = proxy.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to bind proxy test server");
+    }
+
+    process.env.RSS_FETCH_PROXY = `http://user:p%@127.0.0.1:${address.port}`;
+
+    const xml = await fetchFeedXml("http://rsshub.example/demo");
+
+    expect(xml).toContain("<title>Proxy Feed</title>");
+    expect(seenProxyAuthorizations).toEqual([
+      `Basic ${Buffer.from("user:p%").toString("base64")}`,
+    ]);
+
+    await close(proxy);
+  });
+
+  test("decodes valid percent-encoded proxy credentials", async () => {
+    const seenProxyAuthorizations: Array<string | undefined> = [];
+    const proxy = http.createServer((req, res) => {
+      seenProxyAuthorizations.push(req.headers["proxy-authorization"]);
+      res.writeHead(200, {
+        "Content-Type": "application/rss+xml; charset=utf-8",
+      });
+      res.end(
+        "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Proxy Feed</title></channel></rss>",
+      );
+    });
+
+    await listen(proxy);
+    const address = proxy.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to bind proxy test server");
+    }
+
+    process.env.RSS_FETCH_PROXY = `http://u%3Aer:p%3A@127.0.0.1:${address.port}`;
+
+    const xml = await fetchFeedXml("http://rsshub.example/demo");
+
+    expect(xml).toContain("<title>Proxy Feed</title>");
+    expect(seenProxyAuthorizations).toEqual([
+      `Basic ${Buffer.from("u:er:p:").toString("base64")}`,
+    ]);
+
+    await close(proxy);
+  });
+
   test("can bypass RSS_FETCH_PROXY for direct feed requests", async () => {
     const seenProxyRequests: string[] = [];
     const upstream = http.createServer((_req, res) => {

@@ -63,6 +63,58 @@ describe("AI proxy fetch", () => {
     await close(proxy);
   });
 
+  test("accepts proxy credentials with malformed percent escapes", async () => {
+    const seenProxyAuthorizations: Array<string | undefined> = [];
+    const proxy = http.createServer((req, res) => {
+      seenProxyAuthorizations.push(req.headers["proxy-authorization"]);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    await listen(proxy);
+    const address = proxy.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to bind proxy test server");
+    }
+
+    process.env.AI_PROXY_URL = `http://user:p%@127.0.0.1:${address.port}`;
+
+    const response = await aiRequestFetch("http://ai.example/v1/chat/completions");
+
+    expect(response.ok).toBe(true);
+    expect(seenProxyAuthorizations).toEqual([
+      `Basic ${Buffer.from("user:p%").toString("base64")}`,
+    ]);
+
+    await close(proxy);
+  });
+
+  test("decodes valid percent-encoded proxy credentials", async () => {
+    const seenProxyAuthorizations: Array<string | undefined> = [];
+    const proxy = http.createServer((req, res) => {
+      seenProxyAuthorizations.push(req.headers["proxy-authorization"]);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    await listen(proxy);
+    const address = proxy.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Unable to bind proxy test server");
+    }
+
+    process.env.AI_PROXY_URL = `http://u%3Aer:p%3A@127.0.0.1:${address.port}`;
+
+    const response = await aiRequestFetch("http://ai.example/v1/chat/completions");
+
+    expect(response.ok).toBe(true);
+    expect(seenProxyAuthorizations).toEqual([
+      `Basic ${Buffer.from("u:er:p:").toString("base64")}`,
+    ]);
+
+    await close(proxy);
+  });
+
   test("adds NVIDIA embedding request fields before proxying", async () => {
     const seenBodies: unknown[] = [];
     const proxy = http.createServer((req, res) => {
