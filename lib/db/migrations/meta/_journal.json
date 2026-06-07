@@ -75,19 +75,12 @@
     {
       "idx": 10,
       "version": "7",
-      "when": 1780731007012,
-      "tag": "0010_shallow_rocket_racer",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
       "when": 1780734663036,
       "tag": "0011_repair_embedding_rebuild_runs",
       "breakpoints": true
     },
     {
-      "idx": 12,
+      "idx": 11,
       "version": "7",
       "when": 1780750800000,
       "tag": "0012_feed_fetch_strategy",
