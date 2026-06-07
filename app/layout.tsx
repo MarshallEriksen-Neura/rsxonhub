@@ -4,6 +4,8 @@ import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/retroui/Sonner";
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,6 +45,8 @@ export default function RootLayout({
           {children}
           {modal}
           <Toaster richColors closeButton position="top-center" />
+          <SpeedInsights />
+          <Analytics />
         </ThemeProvider>
       </body>
     </html>

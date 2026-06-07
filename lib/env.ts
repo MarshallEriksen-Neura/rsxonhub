@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizePostgresUrl, parsePostgresUrl } from "@/lib/database-url";
 import { parseClockTime } from "@/lib/datetime";
 import { normalizeHttpUrl } from "@/lib/url";
 
@@ -21,6 +22,25 @@ const urlString = () =>
     z.string().url(),
   );
 
+const postgresUrlString = () =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value;
+      return normalizePostgresUrl(value);
+    },
+    z.string().min(1).refine(
+      (value) => {
+        try {
+          parsePostgresUrl(value);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: "Expected a postgres or postgresql URL" },
+    ),
+  );
+
 const clockString = () =>
   z.string().refine(
     (value) => {
@@ -37,7 +57,7 @@ const clockString = () =>
 const positiveIntegerString = () => z.coerce.number().int().positive();
 
 const schema = z.object({
-  DATABASE_URL: urlString(),
+  DATABASE_URL: postgresUrlString(),
   RSSHUB_BASE_URL: urlString().default("https://rsshub.app"),
   RSS_FETCH_PROXY: optionalString(),
 
