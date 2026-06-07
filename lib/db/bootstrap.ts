@@ -67,11 +67,8 @@ async function syncEnvUser() {
       username: env.AUTH_USERNAME,
       passwordHash,
     })
-    .onConflictDoUpdate({
+    .onConflictDoNothing({
       target: users.username,
-      set: {
-        passwordHash,
-      },
     });
 }
 
