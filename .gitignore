@@ -21,9 +21,7 @@
 /build
 
 # local docker overrides
-Dockerfile.worker
 docker-compose.worker.yml
-scripts/worker.ts
 
 # misc
 .DS_Store
