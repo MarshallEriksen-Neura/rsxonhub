@@ -89,8 +89,18 @@ export function createSearchArticlesTool(options: CreateChatToolsOptions = {}) {
         url: meta?.url ?? null,
         feedTitle: meta?.feedTitle ?? null,
         publishedAt: meta?.publishedAt?.toISOString() ?? null,
-        excerpt: c.content.slice(0, 1200),
+        excerpt: (c.body ?? c.content).slice(0, 1200),
+        chunkIndex: c.chunkIndex,
+        chunkType: c.chunkType,
+        sectionPath: c.sectionPath ?? [],
+        charStart: c.charStart,
+        charEnd: c.charEnd,
         distance: c.distance,
+        lexicalScore: c.lexicalScore,
+        vectorRank: c.vectorRank,
+        lexicalRank: c.lexicalRank,
+        fusedScore: c.fusedScore,
+        retrievalSource: c.retrievalSource,
       };
     });
 
@@ -187,7 +197,7 @@ export function createGetArticleContentTool(options: CreateChatToolsOptions = {}
 }
 
 /** 列出订阅源 */
-export function createListFeedsTool(options: CreateChatToolsOptions = {}) {
+export function createListFeedsTool() {
   return tool({
   description: "列出所有订阅源，用于回答「我订阅了哪些」类问题。",
   inputSchema: zodSchema(z.object({})),
@@ -253,7 +263,7 @@ export function createChatTools(options: CreateChatToolsOptions = {}) {
     searchArticles: createSearchArticlesTool(options),
     findArticlesByKeyword: createFindArticlesByKeywordTool(options),
     getArticleContent: createGetArticleContentTool(options),
-    listFeeds: createListFeedsTool(options),
+    listFeeds: createListFeedsTool(),
     getLatestDigest: createGetLatestDigestTool(options),
   } as const;
 }

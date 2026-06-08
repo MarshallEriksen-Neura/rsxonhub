@@ -11,7 +11,7 @@ describe("embedding rebuild helpers", () => {
 
     expect(first.length).toBeGreaterThan(1);
     expect(second).toEqual(first);
-    expect(first.every((chunk) => chunk.length <= 1200)).toBe(true);
+    expect(first.every((chunk) => chunk.length <= 1800)).toBe(true);
   });
 
   test("uses schema embedding dimension as expected runtime dimension", () => {

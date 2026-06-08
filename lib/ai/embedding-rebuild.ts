@@ -9,7 +9,11 @@ import {
   advanceEmbeddingRebuildProgress,
   type EmbeddingRebuildProgress,
 } from "@/lib/ai/embedding-rebuild-progress";
-import { chunkArticleText, expectedEmbeddingDimension } from "@/lib/ai/embedding-text";
+import {
+  chunkArticleText,
+  expectedEmbeddingDimension,
+  planArticleEmbeddingChunks,
+} from "@/lib/ai/embedding-text";
 import { db } from "@/lib/db";
 import {
   articleChunks,
@@ -21,6 +25,7 @@ import {
 
 const EMBED_BATCH_SIZE = 16;
 const REBUILD_ARTICLE_PAGE_SIZE = 25;
+const HYBRID_RRF_K = 60;
 
 export type EmbeddingChangeCheck = {
   changed: boolean;
@@ -28,6 +33,26 @@ export type EmbeddingChangeCheck = {
   expectedDimension: number;
   existingChunkCount: number;
   requiresRebuild: boolean;
+};
+
+type ArticleChunkSearchRow = {
+  articleId: number;
+  chunkIndex: number;
+  content: string;
+  body: string | null;
+  title: string | null;
+  chunkType: string;
+  sectionPath: string[] | null;
+  charStart: number | null;
+  charEnd: number | null;
+  charCount: number | null;
+  contentHash: string | null;
+  distance: number | null;
+  lexicalScore: number | null;
+  vectorRank: number | null;
+  lexicalRank: number | null;
+  fusedScore: number;
+  retrievalSource: "vector" | "lexical" | "hybrid";
 };
 
 export async function probeEmbeddingDimension(config?: EmbeddingRuntimeConfig) {
@@ -242,21 +267,88 @@ export async function retrieveArticleChunks(query: string, limit = 8) {
     }),
   );
 
+  const candidateLimit = Math.max(limit * 4, limit);
+  const [vectorRows, lexicalRows] = await Promise.all([
+    retrieveVectorArticleChunks(result.embedding, candidateLimit),
+    retrieveLexicalArticleChunks(query, candidateLimit),
+  ]);
+
+  return diversifyArticleChunks(
+    fuseHybridChunkCandidates(vectorRows, lexicalRows),
+    limit,
+  );
+}
+
+function retrieveVectorArticleChunks(embedding: number[], candidateLimit: number) {
   return db
     .select({
       articleId: articleChunks.articleId,
       chunkIndex: articleChunks.chunkIndex,
       content: articleChunks.content,
-      distance: sql<number>`${articleChunks.embedding} <=> ${JSON.stringify(result.embedding)}::vector`,
+      body: articleChunks.body,
+      title: articleChunks.title,
+      chunkType: articleChunks.chunkType,
+      sectionPath: articleChunks.sectionPath,
+      charStart: articleChunks.charStart,
+      charEnd: articleChunks.charEnd,
+      charCount: articleChunks.charCount,
+      contentHash: articleChunks.contentHash,
+      distance: sql<number>`${articleChunks.embedding} <=> ${JSON.stringify(embedding)}::vector`,
     })
     .from(articleChunks)
     .where(sql`${articleChunks.embedding} is not null`)
-    .orderBy(sql`${articleChunks.embedding} <=> ${JSON.stringify(result.embedding)}::vector`)
-    .limit(limit);
+    .orderBy(sql`${articleChunks.embedding} <=> ${JSON.stringify(embedding)}::vector`)
+    .limit(candidateLimit);
+}
+
+function retrieveLexicalArticleChunks(query: string, candidateLimit: number) {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [];
+
+  const likePattern = `%${escapeLikePattern(normalizedQuery)}%`;
+  const document = sql`
+    setweight(to_tsvector('simple', coalesce(${articles.title}, '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(${articles.summaryRaw}, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(${articleChunks.body}, ${articleChunks.content}, '')), 'C')
+  `;
+  const tsQuery = sql`plainto_tsquery('simple', ${normalizedQuery})`;
+  const lexicalScore = sql<number>`
+    ts_rank_cd((${document}), ${tsQuery}) +
+    case when ${articles.title} ilike ${likePattern} escape '\\' then 2 else 0 end +
+    case when ${articles.summaryRaw} ilike ${likePattern} escape '\\' then 1 else 0 end +
+    case when coalesce(${articleChunks.body}, ${articleChunks.content}) ilike ${likePattern} escape '\\' then 1 else 0 end
+  `;
+
+  return db
+    .select({
+      articleId: articleChunks.articleId,
+      chunkIndex: articleChunks.chunkIndex,
+      content: articleChunks.content,
+      body: articleChunks.body,
+      title: articleChunks.title,
+      chunkType: articleChunks.chunkType,
+      sectionPath: articleChunks.sectionPath,
+      charStart: articleChunks.charStart,
+      charEnd: articleChunks.charEnd,
+      charCount: articleChunks.charCount,
+      contentHash: articleChunks.contentHash,
+      distance: sql<number | null>`null`,
+      lexicalScore,
+    })
+    .from(articleChunks)
+    .innerJoin(articles, eq(articles.id, articleChunks.articleId))
+    .where(sql`
+      (${document}) @@ ${tsQuery}
+      or ${articles.title} ilike ${likePattern} escape '\\'
+      or ${articles.summaryRaw} ilike ${likePattern} escape '\\'
+      or coalesce(${articleChunks.body}, ${articleChunks.content}) ilike ${likePattern} escape '\\'
+    `)
+    .orderBy(sql`${lexicalScore} desc`, desc(articles.publishedAt))
+    .limit(candidateLimit);
 }
 
 async function embedArticle(articleId: number, text: string, title?: string) {
-  const chunks = chunkArticleText(text, title);
+  const chunks = planArticleEmbeddingChunks(text, title);
   if (chunks.length === 0) {
     await db.delete(articleChunks).where(eq(articleChunks.articleId, articleId));
     return { articleId, chunkCount: 0 };
@@ -266,7 +358,8 @@ async function embedArticle(articleId: number, text: string, title?: string) {
   let tokenCount = 0;
 
   for (let start = 0; start < chunks.length; start += EMBED_BATCH_SIZE) {
-    const values = chunks.slice(start, start + EMBED_BATCH_SIZE);
+    const batchChunks = chunks.slice(start, start + EMBED_BATCH_SIZE);
+    const values = batchChunks.map((chunk) => chunk.content);
     const result = await withAIRequestRetry(() =>
       embedMany({
         model,
@@ -279,18 +372,35 @@ async function embedArticle(articleId: number, text: string, title?: string) {
     await db.transaction(async (tx) => {
       for (const [offset, embedding] of result.embeddings.entries()) {
         const chunkIndex = start + offset;
+        const chunk = batchChunks[offset];
         await tx
           .insert(articleChunks)
           .values({
             articleId,
             chunkIndex,
-            content: values[offset],
+            content: chunk.content,
+            title: chunk.title,
+            body: chunk.body,
+            chunkType: chunk.chunkType,
+            sectionPath: chunk.sectionPath,
+            charStart: chunk.charStart,
+            charEnd: chunk.charEnd,
+            charCount: chunk.charCount,
+            contentHash: chunk.contentHash,
             embedding,
           })
           .onConflictDoUpdate({
             target: [articleChunks.articleId, articleChunks.chunkIndex],
             set: {
-              content: values[offset],
+              content: chunk.content,
+              title: chunk.title,
+              body: chunk.body,
+              chunkType: chunk.chunkType,
+              sectionPath: chunk.sectionPath,
+              charStart: chunk.charStart,
+              charEnd: chunk.charEnd,
+              charCount: chunk.charCount,
+              contentHash: chunk.contentHash,
               embedding,
             },
           });
@@ -370,6 +480,108 @@ function assertSupportedVectorDimension(dimension: number) {
   }
 }
 
+function fuseHybridChunkCandidates(
+  vectorRows: Array<Omit<ArticleChunkSearchRow, "lexicalScore" | "vectorRank" | "lexicalRank" | "fusedScore" | "retrievalSource">>,
+  lexicalRows: Array<Omit<ArticleChunkSearchRow, "vectorRank" | "lexicalRank" | "fusedScore" | "retrievalSource">>,
+) {
+  const byKey = new Map<string, ArticleChunkSearchRow>();
+
+  vectorRows.forEach((row, index) => {
+    const key = chunkKey(row);
+    byKey.set(key, {
+      ...row,
+      lexicalScore: null,
+      vectorRank: index + 1,
+      lexicalRank: null,
+      fusedScore: rrf(index + 1),
+      retrievalSource: "vector",
+    });
+  });
+
+  lexicalRows.forEach((row, index) => {
+    const key = chunkKey(row);
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.lexicalScore = row.lexicalScore;
+      existing.lexicalRank = index + 1;
+      existing.fusedScore += rrf(index + 1);
+      existing.retrievalSource = "hybrid";
+      return;
+    }
+
+    byKey.set(key, {
+      ...row,
+      vectorRank: null,
+      lexicalRank: index + 1,
+      fusedScore: rrf(index + 1),
+      retrievalSource: "lexical",
+    });
+  });
+
+  return [...byKey.values()].sort((left, right) => {
+    if (right.fusedScore !== left.fusedScore) return right.fusedScore - left.fusedScore;
+    if (left.distance === null && right.distance !== null) return 1;
+    if (left.distance !== null && right.distance === null) return -1;
+    return (left.distance ?? 0) - (right.distance ?? 0);
+  });
+}
+
+function diversifyArticleChunks<T extends { articleId: number; chunkIndex: number }>(
+  rows: T[],
+  limit: number,
+) {
+  const selected: T[] = [];
+  const selectedKeys = new Set<string>();
+  const perArticleCount = new Map<number, number>();
+  const maxInitialPerArticle = Math.max(1, Math.ceil(limit / 3));
+
+  for (const row of rows) {
+    if (selected.length >= limit) break;
+    const articleCount = perArticleCount.get(row.articleId) ?? 0;
+    if (articleCount >= maxInitialPerArticle && hasAlternativeArticle(rows, selectedKeys, row.articleId)) {
+      continue;
+    }
+    selected.push(row);
+    selectedKeys.add(chunkKey(row));
+    perArticleCount.set(row.articleId, articleCount + 1);
+  }
+
+  for (const row of rows) {
+    if (selected.length >= limit) break;
+    const key = chunkKey(row);
+    if (selectedKeys.has(key)) continue;
+    selected.push(row);
+    selectedKeys.add(key);
+  }
+
+  return selected;
+}
+
+function hasAlternativeArticle<T extends { articleId: number; chunkIndex: number }>(
+  rows: T[],
+  selectedKeys: Set<string>,
+  articleId: number,
+) {
+  return rows.some((row) => row.articleId !== articleId && !selectedKeys.has(chunkKey(row)));
+}
+
+function chunkKey(row: { articleId: number; chunkIndex: number }) {
+  return `${row.articleId}:${row.chunkIndex}`;
+}
+
+function rrf(rank: number) {
+  return 1 / (HYBRID_RRF_K + rank);
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
 
 
-export { chunkArticleText, expectedEmbeddingDimension };
+
+export {
+  chunkArticleText,
+  expectedEmbeddingDimension,
+  embedArticle as __testEmbedArticle,
+  fuseHybridChunkCandidates as __testFuseHybridChunkCandidates,
+};

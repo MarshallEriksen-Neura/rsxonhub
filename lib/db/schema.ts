@@ -165,10 +165,19 @@ export const articleChunks = pgTable(
       .references(() => articles.id, { onDelete: "cascade" }),
     chunkIndex: integer("chunk_index").notNull(),
     content: text("content").notNull(),
+    title: text("title"),
+    body: text("body"),
+    chunkType: text("chunk_type").default("mixed").notNull(),
+    sectionPath: jsonb("section_path").$type<string[]>(),
+    charStart: integer("char_start"),
+    charEnd: integer("char_end"),
+    charCount: integer("char_count"),
+    contentHash: text("content_hash"),
     embedding: vector("embedding", { dimensions: DEFAULT_EMBEDDING_DIM }),
   },
   (t) => [
     uniqueIndex("article_chunks_article_chunk_idx").on(t.articleId, t.chunkIndex),
+    index("article_chunks_article_content_hash_idx").on(t.articleId, t.contentHash),
   ],
 );
 
