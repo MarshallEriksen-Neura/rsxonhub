@@ -85,6 +85,20 @@
       "when": 1780750800000,
       "tag": "0012_feed_fetch_strategy",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1780754400000,
+      "tag": "0013_article_chunk_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1780758000000,
+      "tag": "0014_article_chunk_lexical_search",
+      "breakpoints": true
     }
   ]
 }
