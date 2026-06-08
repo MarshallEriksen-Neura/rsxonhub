@@ -20,6 +20,10 @@
 # production
 /build
 
+# local docker overrides
+Dockerfile.worker
+docker-compose.worker.yml
+
 # misc
 .DS_Store
 *.pem
@@ -53,4 +57,3 @@ next-env.d.ts
 .codegraph/
 .tmp-folo-analysis/
 .kilo/
-
