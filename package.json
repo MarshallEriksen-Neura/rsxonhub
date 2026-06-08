@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "bun test",
     "worker": "bun scripts/worker.ts",
+    "worker:rebuild": "sh scripts/rebuild-worker.sh",
     "jobs:once": "bun scripts/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
